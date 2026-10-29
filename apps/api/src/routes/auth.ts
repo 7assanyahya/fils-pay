@@ -75,7 +75,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       throw new UnauthorizedError("invalid_credentials");
     }
 
-    const recipient = await findOtpRecipient(app.db, email) ?? user;
+    const recipient = user;
 
     const { code, expiresAt, rawToken } = await withTransaction(app.db, async (client) => {
       const challenge = await issueChallenge(client, {
@@ -182,6 +182,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (!merchantUserResult) {
         throw new Error("otp/verify: merchant_users row disappeared mid-transaction");
       }
+
+      reply.setCookie(app.config.cookieName, rawToken, {
+        httpOnly: true,
+        secure: app.config.cookieSecure,
+        sameSite: "lax",
+        path: "/",
+        maxAge: app.config.sessionTtlHours * 3600,
+      });
 
       reply.code(200).send({
         authenticated: true,

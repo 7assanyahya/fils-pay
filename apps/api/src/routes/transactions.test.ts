@@ -286,16 +286,53 @@ test("GET /v1/transactions/:id/events returns the timeline in chronological orde
   assert.equal(events[2]!.amountFils, 4_000);
 });
 
-// delete/replace this when FP-212 lands — am
-// MK: keep it until the route is behind the feature flag (REFUNDS_V2), then flip the assertion
-test("POST /v1/refunds returns 501 not_implemented", async () => {
-  const { rawKey } = await createApprovedMerchantWithApiKey("refund-stub");
-  const res = await app.inject({
+test("POST /v1/refunds and /v1/merchants/:id/refunds successfully refund transactions", async () => {
+  const { merchantId, rawKey } = await createApprovedMerchantWithApiKey("refund-live");
+  const txn = await authorize(rawKey, 10_000);
+  await capture(rawKey, txn.id);
+
+  // Partial refund via public route
+  const partialRes = await app.inject({
     method: "POST",
     url: "/v1/refunds",
     headers: authHeader(rawKey),
-    payload: {},
+    payload: {
+      transactionId: txn.id,
+      amountFils: 4_000,
+    },
   });
-  assert.equal(res.statusCode, 501, res.body);
-  assert.equal(res.json().error, "not_implemented");
+  assert.equal(partialRes.statusCode, 200, partialRes.body);
+  const partialBody = partialRes.json();
+  assert.equal(partialBody.status, "succeeded");
+  assert.equal(partialBody.amountFils, 4_000);
+  assert.equal(partialBody.transactionStatus, "partially_refunded");
+  assert.equal(partialBody.refundedTotalFils, 4_000);
+
+  // Full remainder refund via merchant route
+  const fullRes = await app.inject({
+    method: "POST",
+    url: `/v1/merchants/${merchantId}/refunds`,
+    headers: authHeader(rawKey),
+    payload: {
+      transactionId: txn.id,
+    },
+  });
+  assert.equal(fullRes.statusCode, 200, fullRes.body);
+  const fullBody = fullRes.json();
+  assert.equal(fullBody.status, "succeeded");
+  assert.equal(fullBody.amountFils, 6_000);
+  assert.equal(fullBody.transactionStatus, "refunded");
+  assert.equal(fullBody.refundedTotalFils, 10_000);
+
+  // Verify transaction record reflection
+  const getRes = await app.inject({
+    method: "GET",
+    url: `/v1/transactions/${txn.id}`,
+    headers: authHeader(rawKey),
+  });
+  assert.equal(getRes.statusCode, 200, getRes.body);
+  const getBody = getRes.json();
+  assert.equal(getBody.status, "refunded");
+  assert.equal(getBody.capturedFils, 10_000);
+  assert.equal(getBody.refundedFils, 10_000);
 });

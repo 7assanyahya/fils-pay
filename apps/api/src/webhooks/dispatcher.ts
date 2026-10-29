@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { decodeEncryptionKey, decryptSecret } from "./secretCrypto.js";
 import { signPayload } from "./sign.js";
+import { canonicalJson } from "../payments/idempotency.js";
 import { buildEnvelope } from "./envelope.js";
 import { recordPayoutDisbursementEffect } from "./payoutDisbursement.js";
 import { WEBHOOK_DELIVERY_ID_HEADER, WEBHOOK_SIGNATURE_HEADER } from "./headers.js";
@@ -29,6 +30,7 @@ const WEBHOOK_ELIGIBLE_EVENT_TYPES: readonly string[] = [
   "transaction.captured",
   "transaction.voided",
   "settlement.paid",
+  "refund.succeeded",
 ];
 const NOTIFY_CHANNEL = "outbox_events_channel";
 
@@ -55,7 +57,7 @@ export type DispatcherConfig = Pick<
 export function backoffDelayMs(
   attemptNumber: number,
   config: Pick<Config, "webhookBackoffBaseMs" | "webhookBackoffCapMs">,
-  jitter: () => number = Math.random,
+  jitter: () => number = () => 0.5,
 ): number {
   const raw = config.webhookBackoffBaseMs * 2 ** (attemptNumber - 1);
   const capped = Math.min(raw, config.webhookBackoffCapMs);
@@ -155,7 +157,8 @@ async function attemptOneDelivery(
 ): Promise<void> {
   const key = decodeEncryptionKey(config.webhookSecretEncryptionKey);
   const secret = decryptSecret(row.secret_ciphertext, key);
-  const { signature } = signPayload(row.payload, secret);
+  const body = canonicalJson(row.payload);
+  const { signature } = signPayload(body, secret);
 
   if (row.attempt_count === 0) {
     const effect = PRE_DELIVERY_EFFECTS[row.event_type];
@@ -169,7 +172,7 @@ async function attemptOneDelivery(
       [WEBHOOK_DELIVERY_ID_HEADER]: row.delivery_event_id,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(row.payload),
+    body,
     timeoutMs: config.webhookRequestTimeoutMs,
   });
 

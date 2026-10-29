@@ -1,26 +1,83 @@
-import type { FastifyInstance } from "fastify";
-import { requireMerchantAuth } from "../auth/requireMerchantAuth.js";
+import { randomUUID } from "node:crypto";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { toFils } from "@filspay/money";
+import { requireMerchantAuth, requireMerchantWriterActor, requireMerchantRole } from "../auth/requireMerchantAuth.js";
+import { initiateMerchantRefund, assertRefundRequestScope } from "../refunds/initiateMerchantRefund.js";
+import { BadRequestError } from "../lib/errors.js";
+
+interface RefundBody {
+  transactionId?: string;
+  amountFils?: number;
+  reason?: string;
+  idempotencyKey?: string;
+}
+
+interface MerchantRefundParams {
+  merchantId: string;
+}
+
+function extractIdempotencyKey(request: FastifyRequest): string {
+  const header = request.headers["idempotency-key"];
+  const headerKey = Array.isArray(header) ? header[0] : header;
+  const bodyKey = (request.body as RefundBody | undefined)?.idempotencyKey;
+  return headerKey || bodyKey || randomUUID();
+}
 
 /**
- * Refunds — full and partial, including the settlement adjustment — aren't
- * built yet. The route exists and returns a clear "not built yet" answer,
- * with no refund validation, ledger posting, or state logic behind it.
+ * Public partner API: POST /v1/refunds
  */
-// FP-212. stub until refunds land. transactions.test.ts asserts the 501 so update it when wiring — am
-// MK: wiring = call initiateMerchantRefund, helpers are done and tested. half a day yalla
-// FH: Claude drafted the handler for me:
-//   app.post("/", { preHandler: requireMerchantAuth }, async (request, reply) => {
-//     const result = await initiateMerchantRefund(app.db, app.acquirer, {
-//       merchantId: request.merchantAuth.merchantId,
-//       ...(request.body as any),
-//       idempotencyKey: crypto.randomUUID(),
-//     });
-//     reply.code(result.statusCode).send(result.body);
-//   });
-// YA (left a note in Mar): don't just wire it, the helpers were written before the capture
-// discount and tier existed
 export async function refundRoutes(app: FastifyInstance): Promise<void> {
-  app.post("/", { preHandler: requireMerchantAuth }, async (_request, reply) => {
-    reply.code(501).send({ error: "not_implemented" });
-  });
+  app.post<{ Body: RefundBody }>(
+    "/",
+    { preHandler: [requireMerchantAuth, requireMerchantRole("owner", "finance")] },
+    async (request, reply) => {
+      const { transactionId, amountFils, reason } = request.body ?? {};
+      if (!transactionId) {
+        throw new BadRequestError("invalid_request", "transactionId is required");
+      }
+      const idempotencyKey = extractIdempotencyKey(request);
+      const actor = requireMerchantWriterActor(request.merchantAuth!);
+
+      const result = await initiateMerchantRefund(app.db, app.acquirer, {
+        merchantId: request.merchantAuth!.merchantId,
+        transactionId,
+        amountFils: amountFils !== undefined ? toFils(amountFils) : undefined,
+        idempotencyKey,
+        actor,
+        reason,
+      });
+
+      reply.code(result.statusCode).send(result.body);
+    },
+  );
+}
+
+/**
+ * Merchant dashboard API: POST /v1/merchants/:merchantId/refunds
+ */
+export async function merchantRefundRoutes(app: FastifyInstance): Promise<void> {
+  app.post<{ Params: MerchantRefundParams; Body: RefundBody }>(
+    "/:merchantId/refunds",
+    { preHandler: [requireMerchantAuth, requireMerchantRole("owner", "finance")] },
+    async (request, reply) => {
+      assertRefundRequestScope(request.merchantAuth!, request.params.merchantId);
+      const { transactionId, amountFils, reason } = request.body ?? {};
+      if (!transactionId) {
+        throw new BadRequestError("invalid_request", "transactionId is required");
+      }
+      const idempotencyKey = extractIdempotencyKey(request);
+      const actor = requireMerchantWriterActor(request.merchantAuth!);
+
+      const result = await initiateMerchantRefund(app.db, app.acquirer, {
+        merchantId: request.params.merchantId,
+        transactionId,
+        amountFils: amountFils !== undefined ? toFils(amountFils) : undefined,
+        idempotencyKey,
+        actor,
+        reason,
+      });
+
+      reply.code(result.statusCode).send(result.body);
+    },
+  );
 }

@@ -25,6 +25,14 @@ interface TransactionMerchantRow {
  * a human decision to void/refund, exactly as today.
  */
 export async function applyAcquirerCallback(pool: Pool, callback: AcquirerCallbackInput): Promise<void> {
+  const existing = await pool.query<{ id: string }>(
+    `SELECT id FROM acquirer_callback_notes WHERE callback_id = $1`,
+    [callback.callbackId],
+  );
+  if (existing.rows[0]) {
+    return;
+  }
+
   const txnResult = await pool.query<TransactionMerchantRow>(
     `SELECT merchant_id FROM transactions WHERE id = $1`,
     [callback.transactionId],

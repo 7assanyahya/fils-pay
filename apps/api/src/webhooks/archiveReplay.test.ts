@@ -60,8 +60,8 @@ async function insertDelivery(
 ): Promise<string> {
   const outbox = await pool.query<{ id: string }>(
     `INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload)
-     VALUES ($1, 'transaction', $2, '{}'::jsonb) RETURNING id`,
-    [opts.eventType, randomUUID()],
+     VALUES ('admin.test.archive_fixture', 'transaction', $1, '{}'::jsonb) RETURNING id`,
+    [randomUUID()],
   );
   const outboxEventId = outbox.rows[0]!.id;
 

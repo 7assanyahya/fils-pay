@@ -73,8 +73,9 @@ export async function processRefund(
     const txnResult = await client.query<RefundTransactionRow>(
       `SELECT id, merchant_id, status, amount_fils, captured_fils, refunded_fils, acquirer_reference
          FROM transactions
-        WHERE id = $1`,
-      [input.transactionId],
+        WHERE id = $1 AND merchant_id = $2
+        FOR UPDATE`,
+      [input.transactionId, input.merchantId],
     );
     const txn = txnResult.rows[0];
     if (!txn) {
@@ -87,7 +88,7 @@ export async function processRefund(
     const capturedFils = toFils(Number(txn.captured_fils));
     const refundedFils = toFils(Number(txn.refunded_fils));
 
-    const refundableFils = subtractFils(amountAuthorized, refundedFils);
+    const refundableFils = subtractFils(capturedFils, refundedFils);
 
     const validation = validateRefundRequest(
       {
@@ -162,10 +163,17 @@ export async function processRefund(
       return { statusCode: 502, body };
     }
 
-    const newRefundedTotal = addFils(prepared.refundedFils, prepared.requestedAmount);
+    // Re-lock transaction row to prevent lost updates or concurrent over-refunds
+    const freshTxnResult = await client.query<{ captured_fils: string; refunded_fils: string }>(
+      `SELECT captured_fils, refunded_fils FROM transactions WHERE id = $1 FOR UPDATE`,
+      [prepared.transactionId],
+    );
+    const freshCaptured = toFils(Number(freshTxnResult.rows[0]!.captured_fils));
+    const freshRefunded = toFils(Number(freshTxnResult.rows[0]!.refunded_fils));
+    const newRefundedTotal = addFils(freshRefunded, prepared.requestedAmount);
     const newStatus = nextStatusAfterRefund({
       amountFils: prepared.amountAuthorized,
-      capturedFils: prepared.capturedFils,
+      capturedFils: freshCaptured,
       refundedTotalFils: newRefundedTotal,
     });
     const feeReversedFils = calculateRefundFee(
@@ -186,7 +194,7 @@ export async function processRefund(
         prepared.requestedAmount,
         feeReversedFils,
         acquirerResult.acquirerReference,
-        input.reason ?? null,
+        input.reason ?? "unspecified",
         input.actor.type,
         input.actor.id,
       ],
@@ -201,6 +209,16 @@ export async function processRefund(
       newRefundedTotal,
       newStatus,
     ]);
+
+    // Decrease cached merchant balance by net payable delta (refunded gross minus reversed fee)
+    const netRefundPayableDelta = subtractFils(prepared.requestedAmount, feeReversedFils);
+    await client.query(
+      `UPDATE merchant_balances
+          SET cached_payable_fils = cached_payable_fils - $2,
+              updated_at = now()
+        WHERE merchant_id = $1`,
+      [prepared.merchantId, netRefundPayableDelta],
+    );
 
     // Double-entry reversal, mirroring capture's legs with the directions
     // swapped. ledger_entries has CHECK (amount_fils > 0), so a reversal

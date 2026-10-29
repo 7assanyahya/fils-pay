@@ -92,6 +92,7 @@ export interface TransactionDto {
   status: TransactionStatus;
   amountFils: number;
   capturedFils: number;
+  refundedFils?: number;
   currency: string;
   reference: string | null;
   acquirerReference: string;

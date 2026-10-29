@@ -87,7 +87,11 @@ func PayoutSplitBatch(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID) 
 		return SplitPayoutResult{}, err
 	}
 
-	var shares []ChildShare
+	type childData struct {
+		id        uuid.UUID
+		weightBps int64
+	}
+	var children []childData
 	for rows.Next() {
 		var childID uuid.UUID
 		var weightBps int64
@@ -95,14 +99,28 @@ func PayoutSplitBatch(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID) 
 			rows.Close()
 			return SplitPayoutResult{}, err
 		}
-		share := money.ApplyRateFils(money.Fils(netPayout), weightBps)
-		shares = append(shares, ChildShare{ChildMerchantID: childID, WeightBps: weightBps, AllocatedFils: share})
+		children = append(children, childData{id: childID, weightBps: weightBps})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return SplitPayoutResult{}, err
 	}
 	rows.Close()
+
+	weights := make([]ChildWeight, len(children))
+	for i, c := range children {
+		weights[i] = ChildWeight{WeightBps: c.weightBps}
+	}
+	allocatedAmounts := ChildShares(money.Fils(netPayout), weights)
+
+	var shares []ChildShare
+	for i, c := range children {
+		shares = append(shares, ChildShare{
+			ChildMerchantID: c.id,
+			WeightBps:       c.weightBps,
+			AllocatedFils:   allocatedAmounts[i],
+		})
+	}
 
 	var totalAllocated money.Fils
 	for _, s := range shares {
@@ -135,7 +153,7 @@ func PayoutSplitBatch(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID) 
 	// debited from its merchant_payable account, same as PayoutBatch does
 	// for a non-split merchant.
 	// am: should pass netPayout here not totalAllocated, otherwise the cache drifts from the batch
-	if err := balances.ApplyPayout(ctx, tx, parentMerchantID, batchID, totalAllocated); err != nil {
+	if err := balances.ApplyPayout(ctx, tx, parentMerchantID, batchID, money.Fils(netPayout)); err != nil {
 		return SplitPayoutResult{}, err
 	}
 

@@ -196,6 +196,10 @@ export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promi
       return applyTransactionVoided(client, row);
     case "settlement.batch_closed":
       return applyBatchClosed(client, row);
+    case "refund.succeeded": {
+      const payload = row.payload as { merchantId: string; amountFils: number };
+      return applyDailySummaryRollup(client, payload.merchantId, row.created_at, payload.amountFils);
+    }
     default:
       throw new Error(`applyEvent: unhandled event_type ${row.event_type}`);
   }

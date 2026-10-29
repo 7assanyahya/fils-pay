@@ -293,7 +293,7 @@ export async function notifySettlementRefundAdjustment(
     merchantId: input.merchantId,
     batchId: input.batchId,
     refundId: input.refundId,
-    amountFils: Math.round(input.amountFils / 10),
+    amountFils: input.amountFils,
     feeReversedFils: input.feeReversedFils,
   });
 }

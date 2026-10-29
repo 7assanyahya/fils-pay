@@ -36,8 +36,12 @@ func TestRecalculateMDR_RecomputesAtCurrentRate(t *testing.T) {
 		t.Fatalf("CloseBatch: %v", err)
 	}
 
-	// Finance negotiates the rate up by 50bps and asks for the historical
-	// batch to reflect it.
+	// Directive: MDR recalculation applies to open settlement batches only
+	if _, err := pool.Exec(ctx, `UPDATE settlement_batches SET status = 'open' WHERE id = $1`, closed.BatchID); err != nil {
+		t.Fatalf("set batch open: %v", err)
+	}
+
+	// Finance negotiates the rate up by 50bps and asks for the batch to reflect it.
 	const newMdrBps = 300
 	if _, err := pool.Exec(ctx, `UPDATE merchants SET mdr_bps = $2 WHERE id = $1`, merchantID, newMdrBps); err != nil {
 		t.Fatalf("update mdr_bps: %v", err)

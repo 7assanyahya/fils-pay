@@ -7,7 +7,10 @@ export function buildWhere(
   for (const [col, val] of Object.entries(filters)) {
     if (val === undefined || val === null) continue;
     if (Array.isArray(val)) {
-      if (val.length === 0) continue;
+      if (val.length === 0) {
+        parts.push("1=0");
+        continue;
+      }
       values.push(val);
       parts.push(`${col} = ANY($${idx}::uuid[])`);
       idx++;

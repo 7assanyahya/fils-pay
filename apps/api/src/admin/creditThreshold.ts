@@ -1,4 +1,4 @@
-import { applyRateFils, compareFils, toFils, type Fils } from "@filspay/money";
+import { addFils, applyRateFils, compareFils, toFils, type Fils } from "@filspay/money";
 
 /** The two figures that make up a manual credit: what the operator asked to
  *  credit, and the MDR the platform hands back alongside it. */
@@ -12,7 +12,8 @@ export const CREDIT_APPROVAL_THRESHOLD_FILS: Fils = toFils(50_000);
 
 /** Maker-checker: does this credit need a second approver? */
 export function creditRequiresSecondApprover(draft: CreditAmounts): boolean {
-  return compareFils(draft.baseAmountFils, CREDIT_APPROVAL_THRESHOLD_FILS) > 0;
+  const totalFils = addFils(draft.baseAmountFils, draft.feeReversalFils);
+  return compareFils(totalFils, CREDIT_APPROVAL_THRESHOLD_FILS) > 0;
 }
 
 /** Computes the MDR reversal for a manual credit. */

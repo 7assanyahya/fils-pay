@@ -1,7 +1,7 @@
 /** Parses a decimal string into an integer of minor units without floats.
  *  Splits at '.', right-pads or truncates the fraction to `decimals` places,
  *  and returns the concatenated integer. Throws on non-numeric input. */
-export function parseDecimalMinor(raw: string, decimals = 2): number {
+export function parseDecimalMinor(raw: string, decimals = 3): number {
   const trimmed = raw.trim();
   if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
     throw new RangeError(`parseDecimalMinor: not a decimal number: "${raw}"`);

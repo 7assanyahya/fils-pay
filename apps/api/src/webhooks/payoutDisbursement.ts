@@ -11,6 +11,14 @@ export async function recordPayoutDisbursementEffect(
     return;
   }
 
+  const existing = await pool.query<{ id: string }>(
+    `SELECT id FROM settlement_payout_disbursements WHERE settlement_batch_id = $1`,
+    [settlementBatchId],
+  );
+  if (existing.rows[0]) {
+    return;
+  }
+
   await pool.query(
     `INSERT INTO settlement_payout_disbursements (settlement_batch_id, amount_fils, disbursement_reference)
      VALUES ($1, $2, 'disb_' || gen_random_uuid())`,

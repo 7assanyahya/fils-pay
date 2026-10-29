@@ -33,7 +33,8 @@ export function signPayload(
   secret: string,
   timestamp: number = Math.floor(Date.now() / 1000),
 ): SignedPayload {
-  const signedString = `${timestamp}.${canonicalJson(payload)}`;
+  const body = typeof payload === "string" ? payload : canonicalJson(payload);
+  const signedString = `${timestamp}.${body}`;
   const signature = createHmac("sha256", secret).update(signedString).digest("hex");
   return { timestamp, signature: `t=${timestamp},v1=${signature}` };
 }
@@ -89,8 +90,9 @@ export function verifySignature(
   const parsed = parseSignatureHeader(header);
   if (!parsed) return { valid: false, reason: "malformed_header" };
 
+  const body = typeof payload === "string" ? payload : canonicalJson(payload);
   const expected = createHmac("sha256", secret)
-    .update(`${parsed.timestamp}.${canonicalJson(payload)}`)
+    .update(`${parsed.timestamp}.${body}`)
     .digest("hex");
 
   if (!timingSafeEqualHex(expected, parsed.signature)) {

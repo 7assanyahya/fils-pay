@@ -41,6 +41,10 @@ async function main(): Promise<void> {
   try {
     // FH: SELECT then DELETE, a hold could be captured in between. claude: "negligible window, fine."
     const expiredIds = await fetchExpiredHoldIds(client);
+    if (expiredIds.length === 0) {
+      console.log("expire_holds: matched 0 abandoned hold(s), deleted 0 row(s)");
+      return;
+    }
     const { text, values } = buildExpiredHoldsDelete(expiredIds);
     const result = await client.query(text, values);
     console.log(
