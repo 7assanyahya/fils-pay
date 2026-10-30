@@ -26,9 +26,19 @@ export function buildExpiredHoldsDelete(expiredIds: string[]): { text: string; v
 }
 
 /**
- * Deletes only holds that are still 'active' and past expires_at. Captured
- * or released holds are never touched, and a night with nothing expired
- * changes no rows.
+ * Expires holds that are past their expiration window in place without deleting them.
+ * Never touches released or captured holds.
+ */
+export async function expireHolds(client: Client): Promise<number> {
+  const result = await client.query(
+    `UPDATE holds SET status = 'expired' WHERE status = 'active' AND expires_at < now()`,
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Updates holds in place from 'active' to 'expired' when past expires_at.
+ * Captured or released holds are never touched, and holds are never deleted.
  */
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
@@ -39,17 +49,8 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {
-    // FH: SELECT then DELETE, a hold could be captured in between. claude: "negligible window, fine."
-    const expiredIds = await fetchExpiredHoldIds(client);
-    if (expiredIds.length === 0) {
-      console.log("expire_holds: matched 0 abandoned hold(s), deleted 0 row(s)");
-      return;
-    }
-    const { text, values } = buildExpiredHoldsDelete(expiredIds);
-    const result = await client.query(text, values);
-    console.log(
-      `expire_holds: matched ${expiredIds.length} abandoned hold(s), deleted ${result.rowCount ?? 0} row(s)`,
-    );
+    const rowCount = await expireHolds(client);
+    console.log(`expire_holds: expired ${rowCount} hold(s)`);
   } finally {
     await client.end();
   }

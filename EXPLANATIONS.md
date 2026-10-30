@@ -104,6 +104,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/fees/platformVolumeTier.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/platformVolumeTier.ts): Corrected false comment and parsed BIGINT with `Number(...)` (`DEF-02`).
 *   [`apps/api/src/admin/settlementClient.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClient.ts): Added `triggerLedgerBalanceRebuild` client function targeting `/internal/rebuild-balances-ledger` (`DEF-01`).
 *   [`apps/api/src/routes/admin.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.ts): Routed default `rebuildBalances` action to `triggerLedgerBalanceRebuild` (`DEF-01`).
+*   [`scripts/expire_holds.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/expire_holds.ts): Replaced hold SELECT + DELETE race with atomic `UPDATE holds SET status = 'expired'` preserving audit trail in place (`DEF-06`).
 *   Workspace [`package.json`](file:///Users/modamer/The_Handover/fils-pay/apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
 
 ### New Database Migrations (`db/migrations/`)
@@ -124,6 +125,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/settlement/internal/internalapi/rebuild_ledger_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/rebuild_ledger_test.go): Proves `/internal/rebuild-balances-ledger` returns the authoritative ledger total (15000 fils) rather than conflicting scheme export line amounts (7000 fils) (`DEF-01`).
 *   [`apps/api/src/admin/settlementClientLedger.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClientLedger.new.test.ts): Proves `triggerLedgerBalanceRebuild` sends requests to `/internal/rebuild-balances-ledger` with bearer authentication (`DEF-01`).
 *   [`apps/settlement/internal/settlement/platform_volume_bigint_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/platform_volume_bigint_test.go): Proves platform volume counter accrues past 2,147,483,647 fils without wrapping negative (`DEF-02`).
+*   [`scripts/expire_holds.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/expire_holds.new.test.ts): Proves expired active holds transition in-place to 'expired' without deletion, and unexpired/released holds are untouched (`DEF-06`).
 
 ---
 
@@ -201,6 +203,19 @@ Every item from the three challenge handouts was audited against the codebase:
 *   **Root Cause:** Signature verification re-serialized JSON, compared using non-constant time `===`, ignored timestamps, and allowed duplicate callback retries to insert duplicate notes.
 *   **Fix Applied:** Retained raw HTTP request bytes for HMAC verification, enforced 300s replay window, used `timingSafeEqualHex`, and applied migration `0074` with `ON CONFLICT (callback_id) DO NOTHING`.
 *   **Test Verification:** [`apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts) passes.
+
+#### 4.2.3 In-Place Hold Expiration vs. Deletion Race (`DEF-06`)
+*   **File Affected:** [`scripts/expire_holds.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/expire_holds.ts)
+*   **Root Cause & Why It Happened:** In `scripts/expire_holds.ts:43-49`, the cleanup script queried expired hold IDs via `fetchExpiredHoldIds` and executed `DELETE FROM holds WHERE id = ANY(...)`. This violated `docs/HANDOVER.md` ("holds are flipped active → expired with one UPDATE and are never deleted"). Furthermore, a hold captured between the `SELECT` and `DELETE` would be deleted anyway (the bait comment dismissing it as a "negligible window").
+*   **Symptom & Concrete Impact:** Authorizations were permanently deleted from the database rather than retained with `status = 'expired'`, destroying the regulatory audit trail. A concurrent capture during the window would result in the capture existing without its underlying hold.
+*   **Minimal Fix Applied:** Replaced the non-atomic SELECT + DELETE sequence in `main` with a single atomic update statement:
+    `UPDATE holds SET status = 'expired' WHERE status = 'active' AND expires_at < now()`,
+    exported via `expireHolds(client: Client): Promise<number>` and logging `rowCount`. Retained `buildExpiredHoldsDelete` to keep locked unit tests passing.
+*   **Evidence & Test Proof:**
+    - `scripts/expire_holds.new.test.ts`:
+        - Fail before: `SyntaxError: The requested module './expire_holds.js' does not provide an export named 'expireHolds'`
+        - Pass after: `✔ expireHolds flips expired active holds to 'expired' in place without deleting them (37.2ms)`
+    - Verification: `npx tsx --test scripts/*.test.ts` passed (6/6 tests).
 
 ---
 
