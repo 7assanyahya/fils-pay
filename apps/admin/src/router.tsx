@@ -32,4 +32,4 @@ export const router = createBrowserRouter([
       { path: "/webhooks/:merchantId", element: <WebhookReplayPage /> },
     ],
   },
-]);
+], { basename: "/admin" });
