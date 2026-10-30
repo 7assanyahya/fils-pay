@@ -108,7 +108,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 11: Deduct Unbatched Succeeded Refunds in Go Settlement `CloseBatch` (`FP-300` / `FP-212`)
+### [x] Step 11: Deduct Unbatched Succeeded Refunds in Go Settlement `CloseBatch` (`FP-300` / `FP-212`)
 - **Why:** `refunds.settlement_batch_id` was added in `0070_refunds.sql`, and `v_merchant_payout_reconciliation` subtracts refunds from expected payout, but `CloseBatch` (`apps/settlement/internal/settlement/batch.go`) never claimed or deducted unbatched refunds. Adding `claimUnbatchedRefunds` in `CloseBatch` locks unbatched succeeded refunds (`WHERE merchant_id = $1 AND status = 'succeeded' AND settlement_batch_id IS NULL AND occurred_at < $2 ORDER BY occurred_at, id FOR UPDATE`), deducts them oldest-first while keeping batch `gross`, `fee`, and `net` non-negative (`0031_batch_non_negative.sql`), sets `refunds.settlement_batch_id`, and adjusts `ApplyBatchClose` so the already-applied refund balance delta is not double-counted.
 - **Action:**
   ```bash

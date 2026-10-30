@@ -216,15 +216,28 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		batchGross += grossForTxn
 		batchFee += feeForTxn
 	}
-	netPayout := NetPayableFils(batchGross, batchFee)
-
 	// Record this batch's contribution to the platform-wide lifetime
 	// processed-volume counter, in the same transaction that freezes this
 	// batch's own totals — so the counter and the batch it describes
-	// commit or roll back together.
+	// commit or roll back together. Captured volume only; refunds below
+	// don't un-process volume.
 	if err := RecordPlatformProcessedVolume(ctx, tx, platformProcessedFils, int64(batchGross)); err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: record platform volume: %w", err)
 	}
+
+	// Step 9: deduct refunds that no batch has claimed yet (FP-212). The API
+	// already journaled each refund and took its net (amount - fee reversed)
+	// off merchant_payable; without this step the batch would still pay the
+	// refunded sale out. Oldest first, and only while the batch stays
+	// non-negative — anything left over waits for the next batch, so a
+	// refund is never silently dropped and a payout is never negative.
+	refunds, refundGross, refundFee, err := claimUnbatchedRefunds(ctx, tx, merchantID, end, batchGross, batchFee)
+	if err != nil {
+		return BatchResult{}, err
+	}
+	batchGross -= refundGross
+	batchFee -= refundFee
+	netPayout := NetPayableFils(batchGross, batchFee)
 
 	// Step 10: freeze the batch totals.
 	_, err = tx.Exec(ctx, `
@@ -244,6 +257,14 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		`, eventIDs, batchID)
 		if err != nil {
 			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: mark events batched: %w", err)
+		}
+	}
+	if len(refunds) > 0 {
+		_, err = tx.Exec(ctx, `
+			UPDATE refunds SET settlement_batch_id = $2 WHERE id = ANY($1)
+		`, refunds, batchID)
+		if err != nil {
+			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: mark refunds batched: %w", err)
 		}
 	}
 
@@ -272,8 +293,11 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: enqueue outbox event: %w", err)
 	}
 
-	// Step 14: incrementally update the merchant_balances cache.
-	if err := balances.ApplyBatchClose(ctx, tx, merchantID, batchID, netPayout); err != nil {
+	// Step 14: incrementally update the merchant_balances cache. The API
+	// already subtracted each claimed refund's net from the cache when the
+	// refund happened, so add it back here; PayoutBatch then subtracts
+	// netPayout and the cache nets to what the ledger says.
+	if err := balances.ApplyBatchClose(ctx, tx, merchantID, batchID, netPayout+(refundGross-refundFee)); err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: apply balance cache delta: %w", err)
 	}
 
@@ -292,6 +316,49 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		EventCount:    len(eventIDs),
 		LineCount:     len(lines),
 	}, nil
+}
+
+// claimUnbatchedRefunds locks the merchant's succeeded refunds that no batch
+// has claimed and that happened before windowEnd, and picks them oldest
+// first while (gross - refunds) and (fee - fees reversed) and their
+// difference all stay non-negative. Returns the picked ids and their totals.
+func claimUnbatchedRefunds(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID, windowEnd time.Time, gross, fee money.Fils) ([]uuid.UUID, money.Fils, money.Fils, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, amount_fils, fee_reversed_fils
+		  FROM refunds
+		 WHERE merchant_id = $1
+		   AND status = 'succeeded'
+		   AND settlement_batch_id IS NULL
+		   AND occurred_at < $2
+		 ORDER BY occurred_at, id
+		 FOR UPDATE
+	`, merchantID, windowEnd)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("settlement: CloseBatch: select unbatched refunds: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	var refundGross, refundFee money.Fils
+	for rows.Next() {
+		var id uuid.UUID
+		var amount, feeReversed int64
+		if err := rows.Scan(&id, &amount, &feeReversed); err != nil {
+			return nil, 0, 0, fmt.Errorf("settlement: CloseBatch: scan refund: %w", err)
+		}
+		g := gross - refundGross - money.Fils(amount)
+		f := fee - refundFee - money.Fils(feeReversed)
+		if g < 0 || f < 0 || g-f < 0 {
+			break // keep order: later refunds wait behind this one
+		}
+		ids = append(ids, id)
+		refundGross += money.Fils(amount)
+		refundFee += money.Fils(feeReversed)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, 0, fmt.Errorf("settlement: CloseBatch: iterate refunds: %w", err)
+	}
+	return ids, refundGross, refundFee, nil
 }
 
 // PayoutBatch posts the ledger legs representing an actual payout for an
