@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useDashboardAuth } from "../auth/DashboardAuthContext.js";
 import { RequireRole } from "../auth/RequireRole.js";
 import { describeError } from "../api/client.js";
+import { FilsPayLogo } from "./FilsPayLogo.js";
 import "../dashboard.css";
 
 /** Nav shell for every merchant dashboard screen. No impersonation banner
@@ -28,7 +29,9 @@ export function DashboardLayout() {
   return (
     <div className="dash-shell">
       <header className="dash-header">
-        <div className="dash-brand">FilsPay</div>
+        <div className="dash-brand">
+          <FilsPayLogo subtitle="Merchant Banking" />
+        </div>
         <nav className="dash-nav">
           <NavLink to="/dashboard/transactions">Transactions</NavLink>
           <NavLink to="/dashboard/payment-links">Payment links</NavLink>
@@ -46,13 +49,21 @@ export function DashboardLayout() {
         </nav>
         <div className="dash-identity">
           {me ? (
-            <span>
-              {me.email} <span className="dash-role-chip">{me.role}</span>
-              <span className="dash-muted"> · {me.merchant.displayName}</span>
-            </span>
+            <div className="dash-user-badge">
+              <div className="dash-avatar">
+                {me.merchant.displayName.charAt(0).toUpperCase()}
+              </div>
+              <div className="dash-user-info">
+                <span className="dash-user-email">{me.email}</span>
+                <span className="dash-user-meta">
+                  <span className="dash-role-chip">{me.role}</span>
+                  <span className="dash-muted">· {me.merchant.displayName}</span>
+                </span>
+              </div>
+            </div>
           ) : null}
-          <button type="button" className="dash-button" onClick={() => void handleSignOut()}>
-            Log out
+          <button type="button" className="dash-button dash-button-secondary" onClick={() => void handleSignOut()}>
+            Sign out
           </button>
         </div>
       </header>

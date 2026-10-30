@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAdminAuth } from "../auth/AdminAuthContext.js";
 import { describeError, WEB_BASE_URL } from "../api/client.js";
 import { ImpersonationBanner } from "./ImpersonationBanner.js";
+import { FilsPayLogo } from "./FilsPayLogo.js";
 
 /** Nav shell for every admin-plane screen: who you are signed in as, the
  *  section links, a logout, and — above all of it — the impersonation
@@ -28,7 +29,9 @@ export function AdminLayout() {
       <ImpersonationBanner />
 
       <header className="admin-header">
-        <div className="admin-brand">FilsPay Admin</div>
+        <div className="admin-brand">
+          <FilsPayLogo subtitle="Risk & Operations" />
+        </div>
         <nav className="admin-nav">
           <NavLink to="/merchants">Merchants</NavLink>
           <NavLink to="/credits">Credits</NavLink>
@@ -38,12 +41,13 @@ export function AdminLayout() {
         </nav>
         <div className="admin-identity">
           {admin ? (
-            <span>
-              {admin.email} <span className="admin-role-chip">{admin.role}</span>
-            </span>
+            <div className="admin-user-badge">
+              <span className="admin-user-email">{admin.email}</span>
+              <span className="admin-role-chip">{admin.role}</span>
+            </div>
           ) : null}
-          <button type="button" onClick={() => void handleSignOut()}>
-            Log out
+          <button type="button" className="admin-button admin-button-secondary" onClick={() => void handleSignOut()}>
+            Sign out
           </button>
         </div>
       </header>

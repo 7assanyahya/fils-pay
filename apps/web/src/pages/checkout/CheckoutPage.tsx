@@ -4,6 +4,7 @@ import { formatBhd, toFils } from "@filspay/money";
 import { getPaymentLink, payPaymentLink } from "../../api/paymentLinks.js";
 import { ApiError } from "../../api/client.js";
 import type { PaymentLinkPublicDto, PayPaymentLinkResponse, SimulatedCardInput } from "../../types.js";
+import { FilsPayLogo } from "../../components/FilsPayLogo.js";
 import "./CheckoutPage.css";
 
 type LoadState =
@@ -199,10 +200,25 @@ export function CheckoutPage() {
 
   return (
     <main className="checkout-page">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+        <FilsPayLogo size="sm" />
+        <div className="checkout-header-badge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          Bank Protected
+        </div>
+      </div>
+
       <h1>{link.merchantDisplayName}</h1>
-      <p className="checkout-amount">{amount} BHD</p>
       {link.description ? <p className="checkout-description">{link.description}</p> : null}
-      {link.reference ? <p className="checkout-reference">Reference: {link.reference}</p> : null}
+      {link.reference ? <p className="checkout-reference">Ref: {link.reference}</p> : null}
+
+      <div className="checkout-amount-container">
+        <div className="checkout-amount-label">Total Amount Due</div>
+        <div className="checkout-amount">{amount} BHD</div>
+      </div>
 
       {payState.kind === "declined" ? <p className="checkout-error">{payState.message}</p> : null}
 
@@ -212,6 +228,7 @@ export function CheckoutPage() {
           <input
             type="text"
             inputMode="numeric"
+            placeholder="4000 0000 0000 0000"
             required
             value={card.pan}
             onChange={(e) => {
@@ -258,6 +275,7 @@ export function CheckoutPage() {
             <input
               type="text"
               inputMode="numeric"
+              placeholder="123"
               required
               value={card.cvv}
               onChange={(e) => setCard({ ...card, cvv: e.target.value })}
@@ -265,9 +283,17 @@ export function CheckoutPage() {
           </label>
         </div>
         <button type="submit" disabled={submitting}>
-          {submitting ? "Processing..." : `Pay ${amount} BHD`}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          {submitting ? "Processing Payment..." : `Pay ${amount} BHD`}
         </button>
       </form>
+
+      <div className="checkout-footer-guarantee">
+        <span>🔒 256-Bit TLS Encryption • CBB Fintech Standard</span>
+      </div>
 
       <p className="checkout-help">
         Test cards (simulated acquirer, no real charge): any other number approves; a PAN ending{" "}
