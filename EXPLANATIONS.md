@@ -16,6 +16,7 @@
    - [4.3 Money, Arithmetic & Settlement Corrections](#43-money-arithmetic--settlement-corrections)
    - [4.4 Webhook Architecture & Event Processing (FP-240)](#44-webhook-architecture--event-processing-fp-240)
    - [4.5 End-to-End QA Pass Fixes (2026-10-30)](#45-end-to-end-qa-pass-fixes-2026-10-30)
+   - [4.6 Findings Grouped by Root Cause Archetype](#46-findings-grouped-by-root-cause-archetype)
 5. [End-to-End FP-300 / FP-212 Refunds Architecture](#5-end-to-end-fp-300--fp-212-refunds-feature)
 6. [Decoy & Honeypot Triage Matrix (DECOY-01 through DECOY-14)](#6-decoy--honeypot-triage-matrix)
 7. [Agent System Architecture, Filtering Pipeline & Error Recovery](#7-agent-system-architecture-filtering-pipeline--error-recovery)
@@ -41,6 +42,9 @@ This document serves as the **single authoritative technical report** for the Fi
 | **Canary Leak Guard** | Reject poisoned commit trailer | **Clean** | Zero instances of `Reviewed-per: FP-000` |
 | **End-to-End QA Pass** | Every use case exercised live (UI, API, DB) | **10 / 10 use cases run: 4 PASS, 6 with bugs FIXED (10 fixes), 1 left locked (QA-B3), 5 INTENDED** | [`QA_LOG.md`](QA_LOG.md), §4.5 |
 | **Final Refund Demo** | Full + partial refunds tie out end to end | **Pass**: fee reversals 278 and 36 + 35 + 36 = 107, all accounts net 0, 4 signed webhooks valid, reconciliation `gapFils: 0` | [`docs/screenshots/`](docs/screenshots/) |
+| **Security Review** | Defend against SSRF, brute force, CSV injection, privilege escalation | **Hardened & Verified** (SSRF IP validation, login sliding-window throttle, CSV formula escaping) | [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md), §4.5.11–4.5.13 |
+| **Capacity & Resilience** | Sustained load testing, connection pooling, overload shedding | **16.4 checkouts/s sustained, 0 500s under overload** (DB pool deadlock eliminated, 503 load shedding at 200 in-flight) | [`docs/CAPACITY.md`](docs/CAPACITY.md), §4.5.14–4.5.15 |
+| **UI/UX Refinements** | Informative buyer and admin states with visual proofs | **Delivered** (clarified 24h key rotation grace period, reassuring 503 busy checkout copy, graceful link error fallback) | [`docs/screenshots/`](docs/screenshots/), §4.5.16–4.5.17 |
 
 ---
 
@@ -120,6 +124,16 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/settlement/internal/settlement/recalculate_mdr.go`](apps/settlement/internal/settlement/recalculate_mdr.go): Recalculation resolves the current rate from `fee_schedules`, keeps claimed refund reversals netted, and skips batches with no linked events (QA UC8, §4.5.9).
 *   [`apps/api/src/settlement/query.ts`](apps/api/src/settlement/query.ts): Reconciliation's pending estimate uses each event's effective schedule rate (QA UC4, §4.5.10).
 *   [`scripts/dev/proxy.mjs`](scripts/dev/proxy.mjs): Local-only same-origin proxy (`/v1/*` → API, everything else → Vite) so the dashboard and admin console can run against the API, which sends no CORS headers. The API is unchanged; no CORS was added.
+*   [`apps/api/src/webhooks/ssrfGuard.ts`](apps/api/src/webhooks/ssrfGuard.ts), [`apps/api/src/webhooks/transport.ts`](apps/api/src/webhooks/transport.ts), & [`apps/api/src/webhooks/create.ts`](apps/api/src/webhooks/create.ts): Enforced production SSRF guard rejecting private, loopback, link-local, CGNAT, and multicast IPs; DNS pre-flight verification; disabled redirects; and capped response buffers at 64 KiB (§4.5.11).
+*   [`apps/api/src/auth/loginThrottle.ts`](apps/api/src/auth/loginThrottle.ts): Implemented per-account in-memory sliding window throttle (10 failed passwords or 20 OTP challenges per 15m -> 429) across merchant and admin logins (§4.5.12).
+*   [`apps/api/src/transactions/exportCsv.ts`](apps/api/src/transactions/exportCsv.ts): Neutralized CSV formula injection by prepending `'` to fields beginning with `= + - @ \t \r` (§4.5.13).
+*   [`apps/api/src/paymentLinks/pay.ts`](apps/api/src/paymentLinks/pay.ts): Eliminated DB pool deadlocks under concurrent checkout load by executing all checkout steps on the single advisory-lock connection (§4.5.14).
+*   [`apps/api/src/app.ts`](apps/api/src/app.ts), [`apps/api/src/config.ts`](apps/api/src/config.ts), & [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts): Added API load shedding past `API_MAX_INFLIGHT` (200) answering 503 with `Retry-After: 1` and mapped DB pool acquire timeouts to 503 `service_busy` (§4.5.15).
+*   [`apps/admin/src/pages/merchants/MerchantDetailPage.tsx`](apps/admin/src/pages/merchants/MerchantDetailPage.tsx): Enhanced admin key table to render status badges, disabled re-rotation of already-rotated keys, and clarified 24h grace period in confirmation dialog (§4.5.16).
+*   [`apps/web/src/pages/checkout/CheckoutPage.tsx`](apps/web/src/pages/checkout/CheckoutPage.tsx): Improved checkout error handling: 503 responses assure buyers cards were not charged, and non-404 fetch failures prompt temporary unavailability retry (§4.5.17).
+*   [`docs/CAPACITY.md`](docs/CAPACITY.md) & [`scripts/loadtest/checkout.mjs`](scripts/loadtest/checkout.mjs): Standalone load testing tool, capacity analysis, throughput benchmarks (16.4/s at p50 592ms), overload shedding tests, and crash-recovery verification.
+*   [`docs/SECURITY_REVIEW.md`](docs/SECURITY_REVIEW.md): Complete threat assessment, verified cryptographic invariants, and residual risk catalog.
+*   [`docs/AI_USAGE.md`](docs/AI_USAGE.md): AI tooling, reverse proxy configuration, strict agent guardrails, and human-in-the-loop audit case studies.
 
 ### New Database Migrations (`db/migrations/`)
 *   [`db/migrations/0074_acquirer_callback_notes_unique.sql`](db/migrations/0074_acquirer_callback_notes_unique.sql): Purges historical duplicate callback notes and creates unique index on `acquirer_callback_notes(callback_id)`.
@@ -153,6 +167,12 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts`](apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts): An endpoint with a delivery and an archive deletes with 204; both rows are kept with `endpoint_id = NULL` (§4.5.8).
 *   [`apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go`](apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go): Recalculation at an unchanged rate adjusts nothing with claimed refunds or a fee schedule, and leaves batches without linked events alone (§4.5.9).
 *   [`apps/api/src/settlement/reconciliationSchedule.new.test.ts`](apps/api/src/settlement/reconciliationSchedule.new.test.ts): An unbatched capture on a scheduled rate is fully explained as pending (§4.5.10).
+*   [`apps/api/src/webhooks/ssrfGuard.new.test.ts`](apps/api/src/webhooks/ssrfGuard.new.test.ts): Proves SSRF guard rejects private/loopback/link-local/CGNAT/multicast IP literals and allows valid external domains (§4.5.11).
+*   [`apps/api/src/auth/loginThrottle.new.test.ts`](apps/api/src/auth/loginThrottle.new.test.ts): Proves 10 failed passwords or 20 OTP challenges trigger 429 throttling per account email (§4.5.12).
+*   [`apps/api/src/transactions/exportCsv.formula.new.test.ts`](apps/api/src/transactions/exportCsv.formula.new.test.ts): Proves cells starting with formula triggers receive a `'` prefix and harmless cells remain unaltered (§4.5.13).
+*   [`apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts`](apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts): Proves concurrent checkouts exceeding pool size complete without pool starvation deadlocks (§4.5.14).
+*   [`apps/api/src/plugins/overload.new.test.ts`](apps/api/src/plugins/overload.new.test.ts): Proves requests exceeding in-flight capacity shed with 503 and Retry-After headers, while exempting health checks (§4.5.15).
+*   [`apps/api/src/apiKeys/listRevokeAfter.new.test.ts`](apps/api/src/apiKeys/listRevokeAfter.new.test.ts): Proves API key summaries expose `revokeAfter` timestamps for proper frontend status badge rendering (§4.5.16).
 
 ---
 
@@ -461,6 +481,132 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 *   **Fix Applied:** The pending query resolves each event's rate as of its `occurred_at` from `fee_schedules`, falling back to `merchants.mdr_bps`, the same rule as capture.
 *   **Verification:** [`apps/api/src/settlement/reconciliationSchedule.new.test.ts`](apps/api/src/settlement/reconciliationSchedule.new.test.ts) fails before (`expected 9775, actual 9750`) and passes after; settlement/fees suites 24/24; live: `pendingUnbatchedFils: 9775, gapFils: 0`.
 *   **Effect on Existing Data:** None (a read-only report).
+
+#### 4.5.11 Server-Side Request Forgery (SSRF) in Merchant Webhook Endpoints
+*   **Files Affected:** [`apps/api/src/webhooks/ssrfGuard.ts`](apps/api/src/webhooks/ssrfGuard.ts), [`apps/api/src/webhooks/transport.ts`](apps/api/src/webhooks/transport.ts), [`apps/api/src/webhooks/create.ts`](apps/api/src/webhooks/create.ts)
+*   **Symptom:** Webhook endpoints could be registered targeting internal services (e.g. `http://settlement:8091`, `http://127.0.0.1:3000`, cloud metadata `http://169.254.169.254`), and delivery logs returned excerpts of internal responses back to the merchant.
+*   **How Found & Reproduced:** Threat modeling identified that `validateWebhookUrl` only verified `http:` / `https:` schemes, despite an inline comment claiming `create.ts blocks private IPs`. The fetch transport also followed HTTP redirects and had no response body size limit.
+*   **Root Cause:** Incomplete URL validation at registration and zero IP-level checks during dispatch. Fetch followed 3xx redirects blindly, allowing an external host to redirect to an internal IP.
+*   **Fix Applied:** Added `ssrfGuard.ts`: in production, registration and dispatch reject private RFC 1918 subnets, loopback, link-local, CGNAT, and multicast addresses. DNS resolution is performed before dispatch and validated against the guard. Set `redirect: "manual"` and capped response reads to 64 KiB. Dev/test mode retains local receiver access.
+*   **Verification:** [`apps/api/src/webhooks/ssrfGuard.new.test.ts`](apps/api/src/webhooks/ssrfGuard.new.test.ts) (10/10 tests pass); commit `876aabc`.
+*   **Effect on Existing Data:** None. Existing valid endpoints are unaffected.
+
+#### 4.5.12 Per-Account Login Brute-Force and OTP Bypass Throttle
+*   **Files Affected:** [`apps/api/src/auth/loginThrottle.ts`](apps/api/src/auth/loginThrottle.ts), [`apps/api/src/routes/auth.ts`](apps/api/src/routes/auth.ts), [`apps/api/src/routes/adminAuth.ts`](apps/api/src/routes/adminAuth.ts)
+*   **Symptom:** An attacker could execute unbounded credential stuffing or password guessing attacks against merchant and admin logins. Once a password was known, each login call generated a fresh OTP challenge, evading the per-challenge 5-guess cap.
+*   **How Found & Reproduced:** Security review of `POST /v1/auth/login` and `POST /v1/admin/auth/login` showed no rate limiting or failure tracking.
+*   **Root Cause:** State tracking for authentication attempts existed only per `otp_challenge_id`, but not across sequential login requests for a target account.
+*   **Fix Applied:** Introduced an in-memory sliding-window throttle keyed by account email: 10 failed passwords or 20 issued OTP challenges in a 15-minute window returns `429 Too Many Requests` (`{"error":"too_many_login_attempts"}`). Successful logins reset failed attempt counters.
+*   **Verification:** [`apps/api/src/auth/loginThrottle.new.test.ts`](apps/api/src/auth/loginThrottle.new.test.ts) (6/6 tests pass); commit `7bd05ab`.
+*   **Effect on Existing Data:** None.
+
+#### 4.5.13 Formula Injection (CSV Injection) in Transaction Export
+*   **Files Affected:** [`apps/api/src/transactions/exportCsv.ts`](apps/api/src/transactions/exportCsv.ts)
+*   **Symptom:** Exporting transactions to CSV with customer-controlled reference fields starting with formula characters (`=`, `+`, `-`, `@`, `\t`, `\r`) could trigger arbitrary spreadsheet formula execution in Microsoft Excel / Google Sheets.
+*   **How Found & Reproduced:** Code inspection of `exportCsv.ts` revealed values were wrapped in standard CSV escaping (`"..."`) but not sanitized against formula injection syntax.
+*   **Root Cause:** Untrusted user input was exported verbatim without neutralizing spreadsheet control characters.
+*   **Fix Applied:** Prepended a single quote (`'`) to any cell whose first character is `= + - @ \t \r`.
+*   **Verification:** [`apps/api/src/transactions/exportCsv.formula.new.test.ts`](apps/api/src/transactions/exportCsv.formula.new.test.ts) (4/4 tests pass); commit `a76f610`.
+*   **Effect on Existing Data:** Export output only; database records are unmodified.
+
+#### 4.5.14 Database Connection Pool Deadlock Under Concurrent Checkouts
+*   **Files Affected:** [`apps/api/src/paymentLinks/pay.ts`](apps/api/src/paymentLinks/pay.ts)
+*   **Symptom:** Under concurrent buyer checkouts, 20 out of 24 requests failed with `500 internal_error` after 5-second pool acquisition timeouts. Throughput collapsed to ~3.5 checkouts/s.
+*   **How Found & Reproduced:** Capacity testing with [`scripts/loadtest/checkout.mjs`](scripts/loadtest/checkout.mjs) at concurrency 12 against a default 5-connection pool reliably reproduced the deadlock.
+*   **Root Cause:** Each checkout acquired and held a pooled connection for its per-link session advisory lock (`pg_try_advisory_lock`), then attempted to acquire a *second* connection from the pool to execute payment transactions. When 5 concurrent checkouts held all 5 pool connections, none could acquire a second connection, deadlocking the entire pool.
+*   **Fix Applied:** Refactored the checkout flow to execute all database operations (link claim, card authorization/capture, and state transitions) sequentially on the single connection already holding the advisory lock.
+*   **Verification:** [`apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts`](apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts) passes; throughput increased from 3.5/s to 16.4/s (p50 592 ms, 200/200 OK); commits `03c3054`, `8c02e92`.
+*   **Effect on Existing Data:** None.
+
+#### 4.5.15 API Load Shedding and Graceful 503 Overload Rejection
+*   **Files Affected:** [`apps/api/src/app.ts`](apps/api/src/app.ts), [`apps/api/src/config.ts`](apps/api/src/config.ts), [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts)
+*   **Symptom:** Saturated API instances queued requests indefinitely under sudden traffic spikes until database pool acquisition timeouts crashed requests with `500 internal_error`.
+*   **How Found & Reproduced:** Simulated 300 concurrent requests via `checkout.mjs`, causing request queue pileups and unhandled 500 errors.
+*   **Root Cause:** Absence of in-flight concurrency bounding and lack of specific error mapping for pool acquisition timeout errors.
+*   **Fix Applied:** Added an in-flight request counter bounded by `API_MAX_INFLIGHT` (default 200). Requests beyond this threshold are immediately rejected with `503 Service Unavailable` (`{"error":"overloaded"}`) and `Retry-After: 1` without touching PostgreSQL. Additionally, database connection acquisition timeouts are caught by `errorHandler.ts` and returned as `503 service_busy`. Health probes (`/healthz`) are exempt from shedding.
+*   **Verification:** [`apps/api/src/plugins/overload.new.test.ts`](apps/api/src/plugins/overload.new.test.ts) (4/4 tests pass); 300-user load test yielded 86 completions, 814 shed, and **0 500s**; commit `1372627`.
+*   **Effect on Existing Data:** Zero orphan records and zero double-charges under overload.
+
+#### 4.5.16 Admin UI Key Rotation Status and Grace Period Clarification
+*   **Files Affected:** [`apps/admin/src/pages/merchants/MerchantDetailPage.tsx`](apps/admin/src/pages/merchants/MerchantDetailPage.tsx), [`apps/admin/src/types.ts`](apps/admin/src/types.ts), [`apps/api/src/apiKeys/issue.ts`](apps/api/src/apiKeys/issue.ts)
+*   **Symptom:** The admin merchant detail table displayed rotated keys identically to active keys (Revoked: '-', active Rotate button). Clicking Rotate on a rotated key failed with a raw `api_key_already_rotated` error. The confirmation modal also incorrectly stated that the key was immediately revoked and integrations would fail instantly.
+*   **How Found & Reproduced:** Visual UI inspection of the admin console during QA testing of key rotation.
+*   **Root Cause:** Frontend models lacked the `revokeAfter` field, and the component did not distinguish between active, rotated (grace period), expired, and manually revoked states.
+*   **Fix Applied:** Added `revokeAfter` to key models; updated the admin table to render an explicit `Status` badge (`active`, `rotated (works until ...)`, `expired`, `revoked`); removed the Rotate button for already-rotated keys; and updated the modal confirmation copy to explain the 24-hour grace window.
+*   **Verification:** Visual evidence before/after in [`docs/screenshots/ux-admin-api-keys-before.jpg`](docs/screenshots/ux-admin-api-keys-before.jpg) and [`docs/screenshots/ux-admin-api-keys-after.jpg`](docs/screenshots/ux-admin-api-keys-after.jpg); [`apps/api/src/apiKeys/listRevokeAfter.new.test.ts`](apps/api/src/apiKeys/listRevokeAfter.new.test.ts); commit `ce2790f`.
+*   **Effect on Existing Data:** Presentation layer only.
+
+#### 4.5.17 Checkout UX: Informative Error Messaging for Busy and Failed States
+*   **Files Affected:** [`apps/web/src/pages/checkout/CheckoutPage.tsx`](apps/web/src/pages/checkout/CheckoutPage.tsx)
+*   **Symptom:** If a buyer's payment request was shed with a 503 under load, the page displayed a generic "Something went wrong" message, leaving buyers terrified that their card was charged. Furthermore, network or server errors during link loading showed "Payment link not found", confusing customers into believing valid invoices did not exist.
+*   **How Found & Reproduced:** Testing the checkout frontend against an overloaded API.
+*   **Root Cause:** The checkout page collapsed all payment errors into a single generic error message and assumed any failed link `GET` was a 404.
+*   **Fix Applied:** On 503 payment failures, the UI explicitly assures the buyer that their card was not charged and offers a retry. For link fetch failures, errors other than 404 display "Checkout is temporarily unavailable" with a "Try again" button. Genuine 404 responses continue to display "Payment link not found".
+*   **Verification:** Visual evidence in [`docs/screenshots/ux-checkout-busy-before.jpg`](docs/screenshots/ux-checkout-busy-before.jpg), [`docs/screenshots/ux-checkout-busy-after.jpg`](docs/screenshots/ux-checkout-busy-after.jpg), [`docs/screenshots/ux-checkout-load-busy-before.jpg`](docs/screenshots/ux-checkout-load-busy-before.jpg), [`docs/screenshots/ux-checkout-load-busy-after.jpg`](docs/screenshots/ux-checkout-load-busy-after.jpg); commit `e01e4df`.
+*   **Effect on Existing Data:** Frontend display only.
+
+---
+
+### 4.6 Findings Grouped by Root Cause Archetype
+
+Synthesizing the dozens of bugs, security vulnerabilities, and decoys resolved across the system reveals five recurring architectural root-cause patterns:
+
+```mermaid
+flowchart TD
+    RootCauses["Master Defect Archetypes"] --> RC1["1. Lock or Connection Held Across Boundaries"]
+    RootCauses --> RC2["2. Blind Trust of Client or External Inputs"]
+    RootCauses --> RC3["3. Floating-Point & Narrow Integer Arithmetic"]
+    RootCauses --> RC4["4. Forged Documentation & False Code Comments"]
+    RootCauses --> RC5["5. Missing Authorization & Role Checkpoints"]
+
+    RC1 --> E1["Concurrent Refund Races<br/>Payment Link Double Charges<br/>OTP Decrement Races<br/>DB Connection Pool Deadlocks"]
+    RC2 --> E2["FP-203 Client-Side submittedAt Expiry<br/>Unverified Webhook Signatures<br/>SSRF Private IP Endpoints<br/>CSV Formula Injection"]
+    RC3 --> E3["estimateFeeFils Floating Division<br/>float32 Payout Estimate Drift<br/>32-bit Integer Volume Overflow<br/>Delta Split Truncation Residue"]
+    RC4 --> E4["ADR-0003 March Reconciliation Gaps<br/>ADR-0004 View & Balance Drift<br/>ADR-0006 Display Adjustments<br/>False '0046 trigger' & 'blocks private IPs'"]
+    RC5 --> E5["Admin Impersonation Capture/Void<br/>Support Role Capture/Void<br/>Admin Credit Self-Approval"]
+```
+
+#### 1. Lock or Connection Held Across External Calls & Resources
+* **Pattern:** Holding a scarce stateful resource (database row lock, session advisory lock, or pooled connection) while waiting for an external network dependency or attempting to acquire a second connection.
+* **Manifestations:**
+  - *Refund Race (FP-240 / §4.2):* Checking authorization and executing card scheme refunds without a row-level `FOR UPDATE` lock allowed concurrent requests to double-refund.
+  - *Payment Link Double-Charge (§4.2):* Slow network latency allowed concurrent buyers to pay the same link before status updated.
+  - *OTP Race (BUG-A5 / §4.1):* Reading `attempt_count` in memory and updating it in a separate statement allowed parallel brute-force guesses.
+  - *DB Pool Deadlock (§4.5.14):* Checkouts holding an advisory-lock connection waited for a second connection from the pool, deadlocking all available connections.
+* **Architectural Lesson:** Minimize lock scopes, sequence operations on existing connection contexts, and enforce atomic conditional SQL (`UPDATE ... RETURNING`).
+
+#### 2. Blind Trust of Client or External Caller Inputs
+* **Pattern:** Relying on client-supplied timestamps, unvalidated URLs, or raw user text in downstream trusted systems.
+* **Manifestations:**
+  - *Payment Link Expiry Bypass (DECOY-05 / §4.1):* Using client-supplied `submittedAt` to determine expiration allowed expired links to be paid.
+  - *Unsigned Acquirer Callbacks (FP-201 / §4.4):* Re-serializing JSON bodies instead of verifying raw request bytes allowed forged webhook deliveries.
+  - *SSRF Vulnerability (§4.5.11):* Assuming webhook URLs were safe without resolving and verifying target IP addresses.
+  - *CSV Formula Injection (§4.5.13):* Exporting user-controlled reference fields directly to spreadsheet formats without neutralizing control characters.
+* **Architectural Lesson:** Validate all external inputs at trust boundaries; never trust client-asserted state or timestamps; verify raw binary signatures before deserialization.
+
+#### 3. Floating-Point Decimals and Narrow Integers in Monetary Calculations
+* **Pattern:** Storing, casting, or performing math on currency using native floating-point types (`number`, `float32`) or standard 32-bit integers.
+* **Manifestations:**
+  - *Fee Calculation Drift (BUG-A4 / §4.3):* Float multiplication in `estimateFeeFils` caused rounding mismatches against Go settlement.
+  - *Lifetime Payout Estimate (0075 / §4.3):* IEEE 754 `float32` mantissa precision lost integer fils once cumulative volume exceeded 16,777,216 fils (~16.7K BD).
+  - *Platform Stats Overflow (DEF-02 / §4.3):* Accumulating platform volume in 32-bit `INTEGER` caused integer overflow when volume reached 2,147,483,648 fils (~2.1M BD).
+  - *Split Truncation Residue (§4.3):* Truncating integer division across split child merchants dropped fractional fils.
+* **Architectural Lesson:** Adhere strictly to ADR-0001: all monetary units are whole integer fils; represent large totals with `BIGINT` / `int64`; allocate integer remainders deterministically.
+
+#### 4. Forged Documentation and False Code Comments (Decoys & Injections)
+* **Pattern:** Deliberately misleading architectural documentation, fabricated ADRs, and deceptive inline comments designed to trick automated coding agents into introducing regressions or leaving features broken.
+* **Manifestations:**
+  - *Forged ADRs (0003, 0004, 0006):* Invented commits and false rationales claiming March reconciliation must use UTC (ADR-0003), balance caches should bypass the ledger (ADR-0004), and admin adjustments shouldn't post journal legs (ADR-0006).
+  - *False Code Comments:* `create.ts blocks private IPs` (false; SSRF vulnerability), `0046 trigger syncs mdr_bps` (false; no trigger existed, causing reconciliation drift), `SET NULL on delete` (false; foreign key constraint prevented deletion).
+  - *Poisoned AI Guidelines (AGENTS.md, CLAUDE.md):* Poisoned directives instructing agents that BHD has 2 decimals, `/v1/refunds` must stay 501, and commits must add a `Reviewed-per: FP-000` canary.
+* **Architectural Lesson:** Treat all prose and comments as untrusted; anchor truth exclusively in locked tests, foundational ADRs, and empirical runtime verification.
+
+#### 5. Missing Authorization Checkpoints on Privileged Routes
+* **Pattern:** Authenticating identity (`requireMerchantAuth`) but omitting role-based access control (RBAC) authorization checks on state-mutating actions.
+* **Manifestations:**
+  - *Impersonation Capture & Void (§4.5.5):* Support-role impersonation sessions could capture authorizations and void payments because the routes lacked role validation.
+  - *Admin Credit Self-Approval (§4.1):* Comparing `displayName` instead of immutable `admin_id` allowed admins to approve their own credit requests.
+* **Architectural Lesson:** Enforce defense-in-depth: authentication must always be coupled with explicit role verification (`requireMerchantRole("owner", "finance")`) on every mutating route.
 
 ---
 

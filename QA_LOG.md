@@ -56,3 +56,38 @@ Not changed: `docs/ADMIN.md` says support can issue small credits; the code refu
 - The browser pane suppresses native dialogs, so for the refund drawer's `window.confirm` I stubbed `confirm` to return true in the page. Not an app change.
 - Test data planted by QA: one capture event moved to 2026-11-01T21:30Z (boundary test), one key's `revoke_after` moved into the past (grace expiry), two holds' `expires_at` moved into the past.
 - Migration `0077` was not yet applied to the local database and was applied by `npm run migrate` at the start.
+
+## Security Review Passes & Hardening
+
+Post-QA dedicated threat modeling and security review covering network egress, authentication brute-force, injection, and authorization:
+
+| Area | Vulnerability / Threat | Fix & Mitigation | Evidence & Tests | Commit |
+|---|---|---|---|---|
+| **Webhooks (SSRF)** | Private/loopback destination SSRF; unconstrained redirects and unbounded read buffer | Enforced production SSRF guard rejecting private, loopback, link-local, CGNAT, multicast IPs on registration and pre-dispatch resolution; disabled redirects; capped response buffer at 64 KiB | `apps/api/src/webhooks/ssrfGuard.new.test.ts` (10/10 PASS) | `876aabc` |
+| **Auth (Brute Force)** | Unbounded password guessing and infinite fresh OTP challenge generation across repeated logins | Implemented per-account in-memory sliding window limiter: 10 failed passwords or 20 OTP challenges per 15 min returns 429 `too_many_login_attempts`. Successful logins do not count as failures | `apps/api/src/auth/loginThrottle.new.test.ts` (6/6 PASS) | `7bd05ab` |
+| **Data Export (CSV)** | Formula injection via customer-controlled references starting with `= + - @ \t \r` | Sanitized exported CSV cells: prefix matching formula triggers with single quote (`'`) | `apps/api/src/transactions/exportCsv.formula.new.test.ts` (4/4 PASS) | `a76f610` |
+| **Credentials** | Key hash leaked on unauthenticated payment link read | Replaced `merchantIntegrationId` with `null` | Live public read response; `publicRead.new.test.ts` | `8eb377d` |
+| **Authorization** | Impersonation grant (support role) permitted transaction capture and void | Gated `/capture` and `/void` to `owner` and `finance` roles | `transactions.impersonation.new.test.ts` (4/4 PASS) | `619f18a` |
+| **Credentials** | Re-rotating an already-rotated key re-activated the expired key | Refused re-rotation with 409 `api_key_already_rotated` | `apiKeysRerotate.new.test.ts` (3/3 PASS) | `e000cf0` |
+
+## Capacity, Resilience & Load Testing
+
+Benchmark suite and capacity verification conducted via [`scripts/loadtest/checkout.mjs`](scripts/loadtest/checkout.mjs), detailed in [`docs/CAPACITY.md`](docs/CAPACITY.md):
+
+| Area | Bottleneck / Threat | Resolution | Measured Outcome | Commit |
+|---|---|---|---|---|
+| **DB Pool Deadlock** | Checkouts holding an advisory-lock connection waited for a second connection, deadlocking the 5-conn pool under concurrency (20/24 failed with 500) | Sequenced checkout operations onto the single connection holding the advisory lock | Deadlock eliminated; throughput improved from 3.5/s to 16.4/s at p50 592 ms (200/200 OK); test `payPoolDeadlock.new.test.ts` | `03c3054`, `8c02e92` |
+| **Load Shedding** | Overload queued requests until DB pool acquisition timeouts triggered 500 errors | Shed traffic above `API_MAX_INFLIGHT` (200) with 503 `overloaded` (`Retry-After: 1`); DB pool timeouts answer 503 `service_busy` | 300-user overload burst: 814 shed, 86 completed, **0× 500 errors**; test `overload.new.test.ts` | `1372627` |
+| **Crash & Recovery** | Hard crash mid-checkout could result in orphaned or inconsistent states | API terminated with `kill -9` at concurrency 20 | In-flight requests safely aborted; 0 double-charges; ledger remained 100% balanced; reservations timed out and retried successfully | `3aa12d5` |
+| **Ops & Health** | Unbounded memory consumption and absent auto-restart policies | Added container restart policies (`unless-stopped`), `/healthz` endpoint, and 0.5 CPU / 512 MB cgroup limits | Stable container recovery and automated health probe monitoring | `89a8cd9`, `3aa12d5` |
+
+## UI/UX Enhancements & Visual Evidence
+
+Refinements verified in browser sessions with before/after visual captures in [`docs/screenshots/`](docs/screenshots/):
+
+| Area | Problem Identified | UI/UX Improvement | Visual Evidence | Commit |
+|---|---|---|---|---|
+| **Admin API Keys** | Rotated keys appeared identical to active keys (Revoked: '-', active Rotate button); clicking Rotate failed with raw error; modal claimed immediate revocation | Added Status column (`active`, `rotated (works until...)`, `expired`, `revoked`); offered Rotate only on current keys; updated modal to explain 24h grace window | `ux-admin-api-keys-before.jpg`<br/>`ux-admin-api-keys-after.jpg` | `ce2790f` |
+| **Checkout (Busy)** | Under load shedding (503), checkout displayed generic "Something went wrong", alarming buyers about duplicate charges | Explicitly clarifies that the card was not charged and invites the buyer to retry | `ux-checkout-busy-before.jpg`<br/>`ux-checkout-busy-after.jpg` | `e01e4df` |
+| **Checkout (Load)** | Connection or server error on link retrieval showed "Payment link not found", falsely implying nonexistence | Displays "Checkout is temporarily unavailable" with a "Try again" button for non-404 errors (404 retains "not found") | `ux-checkout-load-busy-before.jpg`<br/>`ux-checkout-load-busy-after.jpg` | `e01e4df` |
+| **Merchant Dashboard** | Pre-refund frontend threw runtime unhandled error when encountering refunded transactions | Graceful status and negative fee rendering in transaction table and detail views | `ux-dashboard-refunded-txn-before.jpg`<br/>`ux-dashboard-refunded-txn-after.jpg` | Verified UI |
