@@ -127,6 +127,12 @@ export async function processRefund(
     if (!feeRow) {
       throw new Error("processRefund: fee aggregate returned no row");
     }
+    const reversedResult = await client.query<{ reversed_fils: string }>(
+      `SELECT COALESCE(SUM(fee_reversed_fils), 0)::text AS reversed_fils
+         FROM refunds
+        WHERE transaction_id = $1 AND status = 'succeeded'`,
+      [txn.id],
+    );
 
     const prepared = {
       claimId: claim.row.id,
@@ -138,6 +144,7 @@ export async function processRefund(
       capturedFils,
       refundedFils,
       feeChargedFils: toFils(Number(feeRow.fee_fils)),
+      feeAlreadyReversedFils: toFils(Number(reversedResult.rows[0]?.reversed_fils ?? 0)),
       requestedAmount: validation.amountFils,
     };
 
@@ -166,11 +173,15 @@ export async function processRefund(
       capturedFils: prepared.capturedFils,
       refundedTotalFils: newRefundedTotal,
     });
-    const feeReversedFils = calculateRefundFee(
-      prepared.capturedFils,
-      prepared.feeChargedFils,
-      prepared.requestedAmount,
-    );
+    // Reverse the fee share of the cumulative refunded total, minus what
+    // earlier refunds already reversed. Rounding each partial on its own let
+    // the parts sum to more or less than the fee; this way a full refund
+    // always reverses exactly the fee charged.
+    const cumulativeFeeShare = calculateRefundFee(prepared.capturedFils, prepared.feeChargedFils, newRefundedTotal);
+    const feeReversedFils =
+      compareFils(cumulativeFeeShare, prepared.feeAlreadyReversedFils) > 0
+        ? subtractFils(cumulativeFeeShare, prepared.feeAlreadyReversedFils)
+        : ZERO_FILS;
 
     const refundResult = await client.query<{ id: string; occurred_at: Date }>(
       `INSERT INTO refunds
