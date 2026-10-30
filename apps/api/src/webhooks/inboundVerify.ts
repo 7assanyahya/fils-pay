@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { timingSafeEqualHex } from "../lib/crypto.js";
 
 /** Verifies the signature on an inbound acquirer callback. */
 
@@ -29,25 +30,30 @@ function parseAcquirerSignatureHeader(header: string): ParsedAcquirerSignatureHe
   return { timestamp, signature };
 }
 
-/** There is no timestamp reason: freshness is not checked for inbound callbacks. */
-export type VerifyAcquirerCallbackFailureReason = "malformed_header" | "signature_mismatch";
+export type VerifyAcquirerCallbackFailureReason = "malformed_header" | "signature_mismatch" | "timestamp_out_of_range";
 
 export interface VerifyAcquirerCallbackResult {
   valid: boolean;
   reason?: VerifyAcquirerCallbackFailureReason;
 }
 
-function constantTimeEquals(a: string, b: string): boolean {
-  return Buffer.from(a).length === Buffer.from(b).length &&
-    Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0;
-}
-
-/** Verifies the acquirer callback signature when present and required. */
+/**
+ * Verifies the acquirer callback signature when present and required.
+ *
+ * `payload` should be the raw request body string — the exact bytes the
+ * acquirer signed. A parsed object is re-serialized with JSON.stringify,
+ * which only matches if the sender serialized identically (key order,
+ * whitespace, number formatting), so it is accepted for unit tests only.
+ * `maxAgeSeconds` > 0 rejects a timestamp outside ±maxAgeSeconds of `now`,
+ * so a captured callback can't be replayed later.
+ */
 export function verifyAcquirerCallbackSignature(
   payload: unknown,
   header: string | undefined,
   secret: string,
   requireSignature = false,
+  maxAgeSeconds = 0,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
 ): VerifyAcquirerCallbackResult {
   if (!header) {
     return requireSignature
@@ -58,11 +64,16 @@ export function verifyAcquirerCallbackSignature(
   const parsed = parseAcquirerSignatureHeader(header);
   if (!parsed) return { valid: false, reason: "malformed_header" };
 
+  if (maxAgeSeconds > 0 && Math.abs(nowSeconds - parsed.timestamp) > maxAgeSeconds) {
+    return { valid: false, reason: "timestamp_out_of_range" };
+  }
+
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload);
   const expected = createHmac("sha256", secret)
-    .update(`${parsed.timestamp}.${JSON.stringify(payload)}`)
+    .update(`${parsed.timestamp}.${body}`)
     .digest("hex");
 
-  if (!constantTimeEquals(expected, parsed.signature)) {
+  if (!timingSafeEqualHex(expected, parsed.signature)) {
     return { valid: false, reason: "signature_mismatch" };
   }
 

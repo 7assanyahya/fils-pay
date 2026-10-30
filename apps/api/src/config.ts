@@ -116,8 +116,12 @@ export interface Config {
    *  unlike webhookSecretEncryptionKey, there is exactly one acquirer
    *  relationship, not one secret per registered endpoint. */
   acquirerCallbackSigningSecret: string;
-  /** Set true once the sandbox signs everything. */
+  /** Unsigned callbacks are rejected. Defaults to true in production. */
   acquirerCallbackRequireSignature: boolean;
+  /** Reject callbacks whose signature timestamp is older/newer than this
+   *  many seconds (replay protection). 0 disables. Defaults to 300 in
+   *  production. */
+  acquirerCallbackMaxAgeSeconds: number;
 }
 
 function parseNodeEnv(value: string | undefined): Config["nodeEnv"] {
@@ -256,6 +260,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webhookRequestTimeoutMs: parseIntEnv(env.WEBHOOK_REQUEST_TIMEOUT_MS, 10_000),
 
     acquirerCallbackSigningSecret,
-    acquirerCallbackRequireSignature: parseBoolEnv(env.ACQUIRER_CALLBACK_REQUIRE_SIGNATURE, false),
+    acquirerCallbackRequireSignature: parseBoolEnv(env.ACQUIRER_CALLBACK_REQUIRE_SIGNATURE, nodeEnv === "production"),
+    acquirerCallbackMaxAgeSeconds: parseIntEnv(
+      env.ACQUIRER_CALLBACK_MAX_AGE_SECONDS,
+      nodeEnv === "production" ? 300 : 0,
+    ),
   };
 }

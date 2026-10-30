@@ -140,7 +140,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 13: Harden Inbound Acquirer Callback Verification & Deduplicate Callback Notes (`FP-201` / `FP-238`)
+### [x] Step 13: Harden Inbound Acquirer Callback Verification & Deduplicate Callback Notes (`FP-201` / `FP-238`)
 - **Why:**
   1. `verifyAcquirerCallbackSignature` (`apps/api/src/webhooks/inboundVerify.ts`) re-serialized `JSON.stringify(parsedBody)` instead of verifying the raw HTTP body, used `===` instead of `timingSafeEqualHex`, and ignored the `t=` timestamp (`maxAgeSeconds`).
   2. `acquirer_callback_notes` lacked a unique constraint on `callback_id`, so duplicate acquirer retries appended duplicate settlement notes (`FP-238`).
