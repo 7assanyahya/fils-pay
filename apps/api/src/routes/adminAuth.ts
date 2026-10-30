@@ -56,6 +56,8 @@ export async function adminAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!email || !password) {
       throw new BadRequestError("invalid_request", "email and password are required");
     }
+    const throttleKey = `admin:${email.toLowerCase()}`;
+    app.loginThrottle.assertCanAttempt(throttleKey);
 
     const userResult = await app.db.query<AdminUserRow>(
       `SELECT id, email, role, password_hash FROM admin_users WHERE email = $1 AND status = 'active'`,
@@ -68,8 +70,10 @@ export async function adminAuthRoutes(app: FastifyInstance): Promise<void> {
     // The same generic error in every failure case (no row, disabled
     // account, or wrong password) — the response never discloses which.
     if (!user || !passwordOk) {
+      app.loginThrottle.recordFailure(throttleKey);
       throw new UnauthorizedError("invalid_credentials");
     }
+    app.loginThrottle.recordChallenge(throttleKey);
 
     const { code, expiresAt, rawToken } = await withTransaction(app.db, async (client) => {
       const challenge = await issueAdminChallenge(client, {

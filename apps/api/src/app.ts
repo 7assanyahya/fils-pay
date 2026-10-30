@@ -20,6 +20,7 @@ import { reportingRoutes } from "./routes/reporting.js";
 import { adminRoutes, type AdminRoutesOptions } from "./routes/admin.js";
 import { acquirerCallbackRoutes } from "./routes/acquirerCallbacks.js";
 import { createFetchTransport, type WebhookTransport } from "./webhooks/transport.js";
+import { createLoginThrottle } from "./auth/loginThrottle.js";
 
 export interface BuildAppOptions {
   /** Test seam for the admin plane's cross-process settlement calls only —
@@ -44,6 +45,7 @@ export function buildApp(config: Config, pool: Pool, options: BuildAppOptions = 
   app.decorate("db", pool);
   app.decorate("config", config);
   app.decorate("acquirer", createAcquirerSimulator(config));
+  app.decorate("loginThrottle", createLoginThrottle());
   app.decorate("webhookTransport", options.webhookTransport ?? createFetchTransport({ blockPrivateNetworks: config.nodeEnv === "production" }));
 
   app.register(cookiesPlugin);

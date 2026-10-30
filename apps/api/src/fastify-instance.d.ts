@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type { Config } from "./config.js";
 import type { AcquirerSimulator } from "./acquirer/types.js";
 import type { WebhookTransport } from "./webhooks/transport.js";
+import type { LoginThrottle } from "./auth/loginThrottle.js";
 
 // am: request.merchantAuth is declared in auth/requireMerchantAuth.ts, not here. dont move it
 declare module "fastify" {
@@ -10,5 +11,6 @@ declare module "fastify" {
     config: Config;
     acquirer: AcquirerSimulator;
     webhookTransport: WebhookTransport;
+    loginThrottle: LoginThrottle;
   }
 }

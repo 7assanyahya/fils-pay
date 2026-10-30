@@ -56,6 +56,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!merchantId || !email || !password) {
       throw new BadRequestError("invalid_request", "merchantId, email and password are required");
     }
+    const throttleKey = `merchant:${merchantId}:${email.toLowerCase()}`;
+    app.loginThrottle.assertCanAttempt(throttleKey);
 
     const userResult = await app.db.query<MerchantUserRow>(
       `SELECT mu.id, mu.merchant_id, mu.email, mu.role, mu.password_hash
@@ -72,8 +74,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // The same generic message in every failure case (no row, or wrong
     // password) — the response never discloses which part was wrong.
     if (!user || !passwordOk) {
+      app.loginThrottle.recordFailure(throttleKey);
       throw new UnauthorizedError("invalid_credentials");
     }
+    app.loginThrottle.recordChallenge(throttleKey);
 
     const recipient = user;
 
