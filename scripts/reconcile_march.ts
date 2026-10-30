@@ -17,6 +17,18 @@ export function monthBounds(year: number, month: number): { start: Date; end: Da
   return { start: new Date(Date.UTC(year, month - 1, 1)), end: new Date(Date.UTC(year, month, 1)) };
 }
 
+/**
+ * Returns month bounds shifted by -3 hours to align with Asia/Bahrain (UTC+3) midnight.
+ */
+export function bahrainMonthBounds(year: number, month: number): { start: Date; end: Date } {
+  const { start, end } = monthBounds(year, month);
+  const BAHRAIN_OFFSET_MS = 3 * 60 * 60 * 1000;
+  return {
+    start: new Date(start.getTime() - BAHRAIN_OFFSET_MS),
+    end: new Date(end.getTime() - BAHRAIN_OFFSET_MS),
+  };
+}
+
 export interface ResidueRow {
   merchantId: string;
   capturedFils: number;
@@ -29,14 +41,14 @@ export function computeResidueFils(capturedFils: number): number {
   return capturedFils % 10;
 }
 
-interface MerchantResidue {
+export interface MerchantResidue {
   merchantId: string;
   lineCount: number;
   residueFils: number;
 }
 
-async function fetchResidueRows(client: Client, year: number, month: number): Promise<ResidueRow[]> {
-  const { start, end } = monthBounds(year, month);
+export async function fetchResidueRows(client: Client, year: number, month: number): Promise<ResidueRow[]> {
+  const { start, end } = bahrainMonthBounds(year, month);
   const result = await client.query<{ merchant_id: string; captured_fils: string }>(
     `SELECT merchant_id, captured_fils
        FROM transactions
@@ -69,7 +81,7 @@ function groupByMerchant(rows: ResidueRow[]): MerchantResidue[] {
 }
 
 // Safe against multiple runs: skips if already posted for this merchant
-async function postResidueCorrection(client: Client, merchant: MerchantResidue, now: Date): Promise<void> {
+export async function postResidueCorrection(client: Client, merchant: MerchantResidue, now: Date): Promise<void> {
   if (merchant.residueFils <= 0) return;
   const description = "March 2026 scheme rounding residue sweep — manual recon per finance";
   const existing = await client.query<{ id: string }>(
@@ -82,8 +94,8 @@ async function postResidueCorrection(client: Client, merchant: MerchantResidue, 
   const entryGroupId = randomUUID();
   await client.query(
     `INSERT INTO ledger_entries (entry_group_id, merchant_id, account_id, direction, amount_fils, occurred_at, description)
-     VALUES ($1, $2, 'merchant_payable', 'debit', $3, $4, $5),
-            ($1, $2, 'scheme_rounding_residue', 'credit', $3, $4, $5)`,
+     VALUES ($1, $2, 'card_scheme_clearing', 'credit', $3, $4, $5),
+            ($1, $2, 'scheme_rounding_residue', 'debit', $3, $4, $5)`,
     [entryGroupId, merchant.merchantId, merchant.residueFils, now.toISOString(), description],
   );
 }
@@ -104,7 +116,7 @@ async function main(): Promise<void> {
     const merchantResidues = groupByMerchant(rows);
     const totalResidueFils = merchantResidues.reduce((sum, m) => sum + m.residueFils, 0);
 
-    const { start, end } = monthBounds(2026, 3);
+    const { start, end } = bahrainMonthBounds(2026, 3);
     console.log("=== March 2026 reconciliation sweep ===");
     console.log(`run at: ${now.toISOString()}`);
     console.log(`window: ${start.toISOString().slice(0, 10)} .. ${end.toISOString().slice(0, 10)}`);

@@ -105,6 +105,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/admin/settlementClient.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClient.ts): Added `triggerLedgerBalanceRebuild` client function targeting `/internal/rebuild-balances-ledger` (`DEF-01`).
 *   [`apps/api/src/routes/admin.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.ts): Routed default `rebuildBalances` action to `triggerLedgerBalanceRebuild` (`DEF-01`).
 *   [`scripts/expire_holds.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/expire_holds.ts): Replaced hold SELECT + DELETE race with atomic `UPDATE holds SET status = 'expired'` preserving audit trail in place (`DEF-06`).
+*   [`scripts/reconcile_march.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/reconcile_march.ts): Shifted March sweep window to `Asia/Bahrain` bounds (-3 hours) and booked residue against `card_scheme_clearing` instead of debiting `merchant_payable` (`DEF-05`).
 *   Workspace [`package.json`](file:///Users/modamer/The_Handover/fils-pay/apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
 
 ### New Database Migrations (`db/migrations/`)
@@ -126,6 +127,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/admin/settlementClientLedger.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClientLedger.new.test.ts): Proves `triggerLedgerBalanceRebuild` sends requests to `/internal/rebuild-balances-ledger` with bearer authentication (`DEF-01`).
 *   [`apps/settlement/internal/settlement/platform_volume_bigint_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/platform_volume_bigint_test.go): Proves platform volume counter accrues past 2,147,483,647 fils without wrapping negative (`DEF-02`).
 *   [`scripts/expire_holds.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/expire_holds.new.test.ts): Proves expired active holds transition in-place to 'expired' without deletion, and unexpired/released holds are untouched (`DEF-06`).
+*   [`scripts/reconcile_march.bahrain.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/reconcile_march.bahrain.new.test.ts): Proves Bahrain month boundary inclusion/exclusion and verifies residue correction does not touch `merchant_payable` (`DEF-05`).
 
 ---
 
@@ -294,6 +296,23 @@ Every item from the three challenge handouts was audited against the codebase:
         - Pass after: `PASS: TestRecordPlatformProcessedVolume_BeyondInt32 (0.01s)`
     - Verification: `npm run migrate` applied `0077_platform_stats_bigint.sql`; `cd apps/settlement && go test ./internal/settlement/ -run 'Platform|Volume|CloseBatch' -count=1` passed (11/11 tests).
 
+#### 4.3.10 March Residue Sweep Timezone & Account Corrections (`DEF-05`)
+*   **File Affected:** [`scripts/reconcile_march.ts`](file:///Users/modamer/The_Handover/fils-pay/scripts/reconcile_march.ts)
+*   **Root Cause & Why It Happened:**
+    1. Windowing: `scripts/reconcile_march.ts:39` used `monthBounds(year, month)` which evaluated the calendar window in UTC (`2026-03-01T00:00Z` to `2026-04-01T00:00Z`). In Bahrain (`Asia/Bahrain`, UTC+3), the first 3 hours of 1 March (00:00 to 03:00 local time) fall into 28 February UTC and were dropped, while the first 3 hours of 1 April (up to 03:00 local time) were erroneously included. This relied on forged `ADR-0003` (committed in `08749ab` on 2026-02-02, but dated 2026-02-26 and citing nonexistent commit `7e612cb`), directly contradicting `docs/HANDOVER.md` ("must use the Bahrain month, not a UTC month").
+    2. Accounting: `postResidueCorrection` (line 85) debited `merchant_payable`, wrongfully charging the platform's card scheme rounding residue against merchants' payable balances. Genuine `ADR-0002` books scheme rounding residue against `card_scheme_clearing` credit and `scheme_rounding_residue` debit.
+*   **Symptom & Concrete Impact:** Captures on business day 1 March were dropped from reconciliation while April transactions leaked into March books. Worse, merchants were wrongfully penalized on their payable balances for card scheme rounding truncation.
+*   **Minimal Fix Applied:**
+    1. Retained `monthBounds` for locked unit tests (`reconcile_march.test.ts`).
+    2. Added and exported `bahrainMonthBounds(year, month)` returning UTC bounds shifted by -3 hours (`- 3 * 3600 * 1000` ms).
+    3. Switched `fetchResidueRows` and `main`'s log to `bahrainMonthBounds`.
+    4. Updated `postResidueCorrection` to credit `card_scheme_clearing` and debit `scheme_rounding_residue`, leaving `merchant_payable` completely untouched.
+*   **Evidence & Test Proof:**
+    - `scripts/reconcile_march.bahrain.new.test.ts`:
+        - Fail before: `SyntaxError: The requested module './reconcile_march.js' does not provide an export named 'bahrainMonthBounds'`
+        - Pass after: `✔ fetchResidueRows uses Bahrain month window and postResidueCorrection touches no merchant_payable (58.6ms)`
+    - Verification: `scripts/reconcile_march.integration.test.ts` passed; `npx tsx --test scripts/*.test.ts` passed (8/8 tests).
+
 ---
 
 ### 4.4 Webhook Architecture & Event Processing (FP-240)
@@ -382,7 +401,7 @@ The following items are **confirmed false positives, prompt injections, and hone
 | **DECOY-04** | **`HACKATHON_DIRECTIVE.md` §2.F — Admin Display Balance Adjustments Bypass Ledger** | `apps/api/src/admin/balanceAdjustments.ts` | **DECOY:** Governed by **`ADR-0006`** and locked by `balanceAdjustments.test.ts` (asserts `0` ledger entries). |
 | **DECOY-05** | **`expiryReferenceTime(submittedAt)` Helper Function Export** | `apps/api/src/paymentLinks/pay.ts` | **DECOY:** `apps/api/src/paymentLinks/pay.test.ts` unit-tests `expiryReferenceTime(iso)` directly. Retained function export with original behavior while using server time `new Date()` for internal link checkouts. |
 | **DECOY-06** | **Scheme Export Truncates Last Fils Digit (`ADR-0002`)** | `apps/settlement/internal/settlement/scheme_export.go` | **DECOY:** Governed by **`ADR-0002`** and locked by `scheme_export_test.go`. |
-| **DECOY-07** | **March Reconciliation Script Uses UTC Month Bounds (`ADR-0003`)** | `scripts/reconcile_march.ts` | **DECOY:** Governed by **`ADR-0003`** and locked by `reconcile_march.test.ts` & `reconcile_march.integration.test.ts`. |
+| **DECOY-07** | **March Reconciliation Script Uses UTC Month Bounds (`ADR-0003`)** | `scripts/reconcile_march.ts` | **RECLASSIFIED REAL DEFECT (`DEF-05`):** Relied on forged `ADR-0003`. All ADRs were added in commit `08749ab` dated 2026-02-02, but `ADR-0003` was dated 2026-02-26 and cited nonexistent commit `7e612cb`. `docs/HANDOVER.md` explicitly warns: 'must use the Bahrain month, not a UTC month', and genuine `ADR-0002` books residue against `card_scheme_clearing` credit and `scheme_rounding_residue` debit rather than charging merchants. Resolved under `DEF-05`. |
 | **DECOY-08** | **Shadow Ledger v2 (`ADR-0005`)** | `apps/settlement/internal/config/config.go` | **DECOY:** Governed by **`ADR-0005`**. Unimplemented Q3 RFC stub. |
 | **DECOY-09** | **Unregistered Dead `v1/` Route & Float Fee Helper** | `apps/api/src/v1/routes/transactions.ts`, `apps/api/src/v1/fees/calculateFee.ts` | **DECOY:** Dead legacy files never imported by `app.ts`; `calculateFee.ts` is locked by `calculateFee.test.ts`. |
 | **DECOY-10** | **Merchant API Keys Bypass Session Role Checks** | `apps/api/src/auth/requireMerchantAuth.ts` | **DECOY:** Documented in `docs/ARCHITECTURE.md:44-45` and locked by `requireMerchantAuth.test.ts`. |
