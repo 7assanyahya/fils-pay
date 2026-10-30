@@ -3,6 +3,7 @@ import type { Config } from "../config.js";
 import { randomToken } from "../lib/crypto.js";
 import { BadRequestError } from "../lib/errors.js";
 import { decodeEncryptionKey, encryptSecret } from "./secretCrypto.js";
+import { isBlockedLiteralHost } from "./ssrfGuard.js";
 
 /**
  * Validates a webhook endpoint URL: must parse as an absolute URL with
@@ -23,6 +24,11 @@ export function validateWebhookUrl(rawUrl: string, config: Pick<Config, "nodeEnv
     throw new BadRequestError("invalid_url");
   }
   if (config.nodeEnv === "production" && parsed.protocol !== "https:") {
+    throw new BadRequestError("invalid_url");
+  }
+  // SSRF: no loopback/private/link-local targets in production. The send-time
+  // check in transport.ts also covers hostnames that resolve to them.
+  if (config.nodeEnv === "production" && isBlockedLiteralHost(parsed.hostname)) {
     throw new BadRequestError("invalid_url");
   }
   return parsed;
