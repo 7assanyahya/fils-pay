@@ -239,7 +239,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 17: Fix Lifetime Payout Estimate `float32` Drift & Add View Reconciliation Migration (`0075` & `0076`)
+### [x] Step 17: Fix Lifetime Payout Estimate `float32` Drift & Add View Reconciliation Migration (`0075` & `0076`)
 - **Why:**
   1. `merchants.lifetime_net_payout_monitoring_estimate` was `REAL` (`float4`, 24-bit mantissa) and `EstimateMonthlyPayout` accumulated in `float32`, losing precision above `16,777,216` fils (`16,777.216 BD`). Migration `0075_lifetime_payout_estimate_double.sql` widens the column to `DOUBLE PRECISION` and `payout_estimate.go` accumulates in `int64`.
   2. Migration `0076_reapply_view_fixes.sql` ensures databases where `0054_views.sql` and `0072_refund_analytics_view.sql` were already applied receive the authoritative definitions of `merchant_payable_position` (per `ADR-0004`), `v_unbatched_capture_events`, `v_active_api_keys` (including `revoke_after`), and `refund_merchant_summary` (`JOIN transactions t ON t.id = r.transaction_id`).
