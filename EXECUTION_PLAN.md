@@ -425,7 +425,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/api -- src/settlement/
    ```
 
-### [ ] Step 4: Fix ADR-0001 Floating-Point Math in `estimateFeeFils` (`BUG-A4`)
+### [x] Step 4: Fix ADR-0001 Floating-Point Math in `estimateFeeFils` (`BUG-A4`)
 1. Edit `apps/api/src/fees/estimate.ts` to replace floating-point division and `Math.round` with `applyRateFils` and `subtractFils` from `@filspay/money`:
    ```ts
    import { applyRateFils, subtractFils, type Fils } from "@filspay/money";
