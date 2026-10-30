@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { toFils } from "@filspay/money";
 import { authorizeTransaction } from "../payments/authorize.js";
 import { captureTransaction } from "../payments/capture.js";
@@ -64,62 +64,6 @@ export async function payPaymentLink(
   // makes a second concurrent attempt answer "processing" instead. A crashed
   // process drops its connection and with it the lock, so the reservation's
   // self-healing still works.
-  const release = await payGateFor(pool).acquire();
-  try {
-    return await payWithLinkLock(pool, acquirer, config, input);
-  } finally {
-    release();
-  }
-}
-
-/**
- * Each attempt below holds one pooled connection for the advisory lock and
- * needs a second one for the claim and the authorize/capture transactions.
- * If every connection became a lock holder, all of them would wait for a
- * second connection until connectionTimeoutMillis (a pool deadlock: every
- * checkout fails with 500). At most `max - 1` attempts hold a lock at once,
- * so one connection is always left for their work; the rest wait here.
- */
-interface PayGate {
-  acquire(): Promise<() => void>;
-}
-
-const payGates = new WeakMap<Pool, PayGate>();
-
-function payGateFor(pool: Pool): PayGate {
-  let gate = payGates.get(pool);
-  if (!gate) {
-    const poolMax = (pool as unknown as { options?: { max?: number } }).options?.max ?? 10;
-    const limit = Math.max(1, poolMax - 1);
-    let active = 0;
-    const waiters: Array<() => void> = [];
-    const releaseOne = () => {
-      const next = waiters.shift();
-      if (next) next();
-      else active -= 1;
-    };
-    gate = {
-      acquire: () =>
-        new Promise<() => void>((resolve) => {
-          if (active < limit) {
-            active += 1;
-            resolve(releaseOne);
-          } else {
-            waiters.push(() => resolve(releaseOne));
-          }
-        }),
-    };
-    payGates.set(pool, gate);
-  }
-  return gate;
-}
-
-async function payWithLinkLock(
-  pool: Pool,
-  acquirer: AcquirerSimulator,
-  config: { paymentLinkReservationTimeoutSeconds: number },
-  input: PayPaymentLinkInput,
-): Promise<PayPaymentLinkResult> {
   const lockClient = await pool.connect();
   try {
     const locked = await lockClient.query<{ ok: boolean }>(
@@ -130,13 +74,27 @@ async function payWithLinkLock(
       return { statusCode: 409, body: { error: "payment_link_processing" } };
     }
     try {
-      return await payPaymentLinkLocked(pool, acquirer, config, input);
+      return await payPaymentLinkLocked(onConnection(lockClient), acquirer, config, input);
     } finally {
       await lockClient.query(`SELECT pg_advisory_unlock(hashtext('payment_link'), hashtext($1))`, [input.token]);
     }
   } finally {
     lockClient.release();
   }
+}
+
+/**
+ * The attempt's steps (claim, authorize, capture, finalize) run one after
+ * another, so they run on the connection that holds the advisory lock. Each
+ * pay then needs exactly one pooled connection. Taking a second one while
+ * holding the first let concurrent checkouts fill the pool with lock holders
+ * that all waited for another connection until the acquire timeout (every
+ * checkout failed with 500).
+ */
+function onConnection(client: PoolClient): Pool {
+  const query = client.query.bind(client);
+  const borrowed = { query, release: () => undefined } as unknown as PoolClient;
+  return { query, connect: async () => borrowed } as unknown as Pool;
 }
 
 async function payPaymentLinkLocked(
