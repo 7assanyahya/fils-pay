@@ -32,7 +32,7 @@ This document serves as the **single authoritative technical report** for the Fi
 
 | Category | Target / Requirement | Achieved Status | Proof & Evidence |
 | :--- | :--- | :--- | :--- |
-| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **458 / 458 Passing** (2026-10-30 final run: events 4, money 40, api 386, reporting 12, web 8, scripts 8) | `npm test` across all workspaces |
+| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **471 / 471 Passing** (2026-10-30, commit `f296124`: events 4, money 40, api 399, reporting 12, web 8, scripts 8) | `npm test` across all workspaces |
 | **Go Settlement Suite** | All Go packages pass | **7 / 7 packages with tests `ok`, 0 failures** (the other 3 of 10 have no test files) | `go test -count=1 ./...` in `apps/settlement` |
 | **TypeScript Typecheck** | Zero compiler errors across all packages | **0 Errors** | `npm run typecheck` |
 | **Database Migrations** | Clean, deterministic schema progression | **72 / 72 Migrations Applied** (fresh database: `72 migration(s) applied, 0 already up to date`) | Migrations `0001` through `0078` |
@@ -484,11 +484,11 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 
 #### 4.5.11 Server-Side Request Forgery (SSRF) in Merchant Webhook Endpoints
 *   **Files Affected:** [`apps/api/src/webhooks/ssrfGuard.ts`](apps/api/src/webhooks/ssrfGuard.ts), [`apps/api/src/webhooks/transport.ts`](apps/api/src/webhooks/transport.ts), [`apps/api/src/webhooks/create.ts`](apps/api/src/webhooks/create.ts)
-*   **Symptom:** Webhook endpoints could be registered targeting internal services (e.g. `http://settlement:8091`, `http://127.0.0.1:3000`, cloud metadata `http://169.254.169.254`), and delivery logs returned excerpts of internal responses back to the merchant.
+*   **Symptom:** Webhook endpoints could be registered targeting internal services (e.g. `http://settlement:8091`, `http://127.0.0.1:3000`, cloud metadata `http://169.254.169.254`), and the delivery log would show the merchant an excerpt of the internal service's response.
 *   **How Found & Reproduced:** Threat modeling identified that `validateWebhookUrl` only verified `http:` / `https:` schemes, despite an inline comment claiming `create.ts blocks private IPs`. The fetch transport also followed HTTP redirects and had no response body size limit.
 *   **Root Cause:** Incomplete URL validation at registration and zero IP-level checks during dispatch. Fetch followed 3xx redirects blindly, allowing an external host to redirect to an internal IP.
 *   **Fix Applied:** Added `ssrfGuard.ts`: in production, registration and dispatch reject private RFC 1918 subnets, loopback, link-local, CGNAT, and multicast addresses. DNS resolution is performed before dispatch and validated against the guard. Set `redirect: "manual"` and capped response reads to 64 KiB. Dev/test mode retains local receiver access.
-*   **Verification:** [`apps/api/src/webhooks/ssrfGuard.new.test.ts`](apps/api/src/webhooks/ssrfGuard.new.test.ts) (10/10 tests pass); commit `876aabc`.
+*   **Verification:** [`apps/api/src/webhooks/ssrfGuard.new.test.ts`](apps/api/src/webhooks/ssrfGuard.new.test.ts) (5 tests; 4 of them fail on the old code); commit `876aabc`.
 *   **Effect on Existing Data:** None. Existing valid endpoints are unaffected.
 
 #### 4.5.12 Per-Account Login Brute-Force and OTP Bypass Throttle
@@ -496,8 +496,8 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 *   **Symptom:** An attacker could execute unbounded credential stuffing or password guessing attacks against merchant and admin logins. Once a password was known, each login call generated a fresh OTP challenge, evading the per-challenge 5-guess cap.
 *   **How Found & Reproduced:** Security review of `POST /v1/auth/login` and `POST /v1/admin/auth/login` showed no rate limiting or failure tracking.
 *   **Root Cause:** State tracking for authentication attempts existed only per `otp_challenge_id`, but not across sequential login requests for a target account.
-*   **Fix Applied:** Introduced an in-memory sliding-window throttle keyed by account email: 10 failed passwords or 20 issued OTP challenges in a 15-minute window returns `429 Too Many Requests` (`{"error":"too_many_login_attempts"}`). Successful logins reset failed attempt counters.
-*   **Verification:** [`apps/api/src/auth/loginThrottle.new.test.ts`](apps/api/src/auth/loginThrottle.new.test.ts) (6/6 tests pass); commit `7bd05ab`.
+*   **Fix Applied:** Introduced an in-memory sliding-window throttle per account (merchant id + email for merchants, email for admins): 10 failed passwords or 20 issued OTP challenges in a 15-minute window returns `429 Too Many Requests` (`{"error":"too_many_login_attempts"}`). Successful logins don't count as failures; counts expire after the 15-minute window.
+*   **Verification:** [`apps/api/src/auth/loginThrottle.new.test.ts`](apps/api/src/auth/loginThrottle.new.test.ts) (3 tests: lockout after 10 failures with other accounts unaffected, the 20-challenge cap, and window expiry); commit `7bd05ab`.
 *   **Effect on Existing Data:** None.
 
 #### 4.5.13 Formula Injection (CSV Injection) in Transaction Export
@@ -506,25 +506,25 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 *   **How Found & Reproduced:** Code inspection of `exportCsv.ts` revealed values were wrapped in standard CSV escaping (`"..."`) but not sanitized against formula injection syntax.
 *   **Root Cause:** Untrusted user input was exported verbatim without neutralizing spreadsheet control characters.
 *   **Fix Applied:** Prepended a single quote (`'`) to any cell whose first character is `= + - @ \t \r`.
-*   **Verification:** [`apps/api/src/transactions/exportCsv.formula.new.test.ts`](apps/api/src/transactions/exportCsv.formula.new.test.ts) (4/4 tests pass); commit `a76f610`.
+*   **Verification:** [`apps/api/src/transactions/exportCsv.formula.new.test.ts`](apps/api/src/transactions/exportCsv.formula.new.test.ts) (1 test: references starting with `=`, `+`, `@` and `-` are neutralised, an ordinary reference is unchanged); commit `a76f610`.
 *   **Effect on Existing Data:** Export output only; database records are unmodified.
 
 #### 4.5.14 Database Connection Pool Deadlock Under Concurrent Checkouts
 *   **Files Affected:** [`apps/api/src/paymentLinks/pay.ts`](apps/api/src/paymentLinks/pay.ts)
-*   **Symptom:** Under concurrent buyer checkouts, 20 out of 24 requests failed with `500 internal_error` after 5-second pool acquisition timeouts. Throughput collapsed to ~3.5 checkouts/s.
+*   **Symptom:** Under concurrent buyer checkouts, 20 out of 24 requests failed with `500 internal_error` after 5-second pool acquisition timeouts (p50 5,054 ms).
 *   **How Found & Reproduced:** Capacity testing with [`scripts/loadtest/checkout.mjs`](scripts/loadtest/checkout.mjs) at concurrency 12 against a default 5-connection pool reliably reproduced the deadlock.
 *   **Root Cause:** Each checkout acquired and held a pooled connection for its per-link session advisory lock (`pg_try_advisory_lock`), then attempted to acquire a *second* connection from the pool to execute payment transactions. When 5 concurrent checkouts held all 5 pool connections, none could acquire a second connection, deadlocking the entire pool.
-*   **Fix Applied:** Refactored the checkout flow to execute all database operations (link claim, card authorization/capture, and state transitions) sequentially on the single connection already holding the advisory lock.
-*   **Verification:** [`apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts`](apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts) passes; throughput increased from 3.5/s to 16.4/s (p50 592 ms, 200/200 OK); commits `03c3054`, `8c02e92`.
+*   **Fix Applied:** A first fix (`03c3054`) capped concurrent lock holders at pool max − 1; it removed the deadlock but left one connection for all their work (3.5 checkouts/s, p50 2,622 ms at concurrency 10). The final fix (`8c02e92`) executes all database operations (link claim, card authorization/capture, and state transitions) sequentially on the single connection already holding the advisory lock.
+*   **Verification:** [`apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts`](apps/api/src/paymentLinks/payPoolDeadlock.new.test.ts) passes; at concurrency 10, throughput went from 3.5/s with the interim fix to 16.4/s (p50 592 ms, 200/200 OK); commits `03c3054`, `8c02e92`.
 *   **Effect on Existing Data:** None.
 
 #### 4.5.15 API Load Shedding and Graceful 503 Overload Rejection
 *   **Files Affected:** [`apps/api/src/app.ts`](apps/api/src/app.ts), [`apps/api/src/config.ts`](apps/api/src/config.ts), [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts)
-*   **Symptom:** Saturated API instances queued requests indefinitely under sudden traffic spikes until database pool acquisition timeouts crashed requests with `500 internal_error`.
-*   **How Found & Reproduced:** Simulated 300 concurrent requests via `checkout.mjs`, causing request queue pileups and unhandled 500 errors.
+*   **Symptom:** The API had no limit on in-flight requests, and a pool acquire timeout fell through the error handler as `500 internal_error` (seen in the deadlock run at concurrency 12, §4.5.14).
+*   **How Found & Reproduced:** Capacity review after the deadlock fix: nothing turned excess load away, so an overload would queue until pool timeouts produced 500s. The 300-user overload run below was done after the change.
 *   **Root Cause:** Absence of in-flight concurrency bounding and lack of specific error mapping for pool acquisition timeout errors.
 *   **Fix Applied:** Added an in-flight request counter bounded by `API_MAX_INFLIGHT` (default 200). Requests beyond this threshold are immediately rejected with `503 Service Unavailable` (`{"error":"overloaded"}`) and `Retry-After: 1` without touching PostgreSQL. Additionally, database connection acquisition timeouts are caught by `errorHandler.ts` and returned as `503 service_busy`. Health probes (`/healthz`) are exempt from shedding.
-*   **Verification:** [`apps/api/src/plugins/overload.new.test.ts`](apps/api/src/plugins/overload.new.test.ts) (4/4 tests pass); 300-user load test yielded 86 completions, 814 shed, and **0 500s**; commit `1372627`.
+*   **Verification:** [`apps/api/src/plugins/overload.new.test.ts`](apps/api/src/plugins/overload.new.test.ts) (2 tests: shedding with `Retry-After` then recovery, and pool saturation → 503); 300-user load test yielded 86 completions, 814 shed, and **0 500s**; commit `1372627`.
 *   **Effect on Existing Data:** Zero orphan records and zero double-charges under overload.
 
 #### 4.5.16 Admin UI Key Rotation Status and Grace Period Clarification
@@ -532,7 +532,7 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 *   **Symptom:** The admin merchant detail table displayed rotated keys identically to active keys (Revoked: '-', active Rotate button). Clicking Rotate on a rotated key failed with a raw `api_key_already_rotated` error. The confirmation modal also incorrectly stated that the key was immediately revoked and integrations would fail instantly.
 *   **How Found & Reproduced:** Visual UI inspection of the admin console during QA testing of key rotation.
 *   **Root Cause:** Frontend models lacked the `revokeAfter` field, and the component did not distinguish between active, rotated (grace period), expired, and manually revoked states.
-*   **Fix Applied:** Added `revokeAfter` to key models; updated the admin table to render an explicit `Status` badge (`active`, `rotated (works until ...)`, `expired`, `revoked`); removed the Rotate button for already-rotated keys; and updated the modal confirmation copy to explain the 24-hour grace window.
+*   **Fix Applied:** Added `revokeAfter` to key models; updated the admin table to render a `Status` column (`active`, `rotated (works until ...)`, `expired`, `revoked`); removed the Rotate button for already-rotated keys; and updated the modal confirmation copy to explain the 24-hour grace window.
 *   **Verification:** Visual evidence before/after in [`docs/screenshots/ux-admin-api-keys-before.jpg`](docs/screenshots/ux-admin-api-keys-before.jpg) and [`docs/screenshots/ux-admin-api-keys-after.jpg`](docs/screenshots/ux-admin-api-keys-after.jpg); [`apps/api/src/apiKeys/listRevokeAfter.new.test.ts`](apps/api/src/apiKeys/listRevokeAfter.new.test.ts); commit `ce2790f`.
 *   **Effect on Existing Data:** Presentation layer only.
 
@@ -553,7 +553,7 @@ Synthesizing the dozens of bugs, security vulnerabilities, and decoys resolved a
 
 ```mermaid
 flowchart TD
-    RootCauses["Master Defect Archetypes"] --> RC1["1. Lock or Connection Held Across Boundaries"]
+    RootCauses["Master Defect Archetypes"] --> RC1["1. Missing or Mis-ordered Locking"]
     RootCauses --> RC2["2. Blind Trust of Client or External Inputs"]
     RootCauses --> RC3["3. Floating-Point & Narrow Integer Arithmetic"]
     RootCauses --> RC4["4. Forged Documentation & False Code Comments"]
@@ -566,14 +566,14 @@ flowchart TD
     RC5 --> E5["Admin Impersonation Capture/Void<br/>Support Role Capture/Void<br/>Admin Credit Self-Approval"]
 ```
 
-#### 1. Lock or Connection Held Across External Calls & Resources
-* **Pattern:** Holding a scarce stateful resource (database row lock, session advisory lock, or pooled connection) while waiting for an external network dependency or attempting to acquire a second connection.
+#### 1. Missing or Mis-ordered Locking Under Concurrency
+* **Pattern:** Concurrent requests read shared state before any lock serialised them, or a request held one pooled connection while waiting for another. (Capture holding its row lock across the acquirer call is deliberate and correct; the refund fix copies it.)
 * **Manifestations:**
   - *Refund Race (FP-240 / §4.2):* Checking authorization and executing card scheme refunds without a row-level `FOR UPDATE` lock allowed concurrent requests to double-refund.
   - *Payment Link Double-Charge (§4.2):* Slow network latency allowed concurrent buyers to pay the same link before status updated.
   - *OTP Race (BUG-A5 / §4.1):* Reading `attempt_count` in memory and updating it in a separate statement allowed parallel brute-force guesses.
   - *DB Pool Deadlock (§4.5.14):* Checkouts holding an advisory-lock connection waited for a second connection from the pool, deadlocking all available connections.
-* **Architectural Lesson:** Minimize lock scopes, sequence operations on existing connection contexts, and enforce atomic conditional SQL (`UPDATE ... RETURNING`).
+* **Architectural Lesson:** Serialise a money-moving operation on its row for the whole operation, acquirer call included; spend limited budgets with atomic conditional SQL (`UPDATE ... RETURNING`); never hold one pooled connection while waiting for a second.
 
 #### 2. Blind Trust of Client or External Caller Inputs
 * **Pattern:** Relying on client-supplied timestamps, unvalidated URLs, or raw user text in downstream trusted systems.
@@ -803,11 +803,11 @@ npm run typecheck
 ```
 *Expected: 0 errors across all 7 workspace targets.*
 
-### 3. Run Full TypeScript Test Suite (458 Tests)
+### 3. Run Full TypeScript Test Suite (471 Tests)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm test
 ```
-*Expected: 458 / 458 tests pass across `@filspay/events` (4), `@filspay/money` (40), `@filspay/api` (386), `@filspay/reporting` (12), `@filspay/web` (8) and scripts (8). Observed 2026-10-30 with no API, settlement or reporting process running.*
+*Expected: 471 / 471 tests pass across `@filspay/events` (4), `@filspay/money` (40), `@filspay/api` (399), `@filspay/reporting` (12), `@filspay/web` (8) and scripts (8). Observed 2026-10-30 with no API, settlement or reporting process running.*
 
 ### 4. Run Go Settlement Test Suite
 ```bash

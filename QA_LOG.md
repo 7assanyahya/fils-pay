@@ -4,7 +4,7 @@ Whole stack run locally and every use case exercised the way a user would (brows
 
 **Totals:** 10 use cases: 4 PASS (UC1, UC2, UC5, UC10) and 6 where bugs were found and FIXED (UC3, UC4, UC6, UC7, UC8, UC9). Findings: 10 bugs FIXED, 1 left as is because a locked test pins it (QA-B3), 5 INTENDED, plus the 3 known open items DEF-03/07/08.
 
-**Final run (2026-10-30, head after the follow-up fixes):** `npm test` 458/458; `go test ./...` 7/7 packages with tests `ok` (3 have none); `npm run typecheck` 0 errors; fresh database: 72/72 migrations; `npm run seed` 5/5 REAL. Refund demo re-run on the final code: reversals 278 and 36 + 35 + 36 = 107, every account nets to 0, reconciliation `gapFils: 0`.
+**Final run (2026-10-30, head after the follow-up fixes):** `npm test` 471/471 (re-run at commit `f296124`); `go test ./...` 7/7 packages with tests `ok` (3 have none); `npm run typecheck` 0 errors; fresh database: 72/72 migrations; `npm run seed` 5/5 REAL. Refund demo re-run on the final code: reversals 278 and 36 + 35 + 36 = 107, every account nets to 0, reconciliation `gapFils: 0`.
 
 | # | Steps | Expected | Actual | Result | Evidence | Commit |
 |---|---|---|---|---|---|---|
@@ -63,12 +63,12 @@ Post-QA dedicated threat modeling and security review covering network egress, a
 
 | Area | Vulnerability / Threat | Fix & Mitigation | Evidence & Tests | Commit |
 |---|---|---|---|---|
-| **Webhooks (SSRF)** | Private/loopback destination SSRF; unconstrained redirects and unbounded read buffer | Enforced production SSRF guard rejecting private, loopback, link-local, CGNAT, multicast IPs on registration and pre-dispatch resolution; disabled redirects; capped response buffer at 64 KiB | `apps/api/src/webhooks/ssrfGuard.new.test.ts` (10/10 PASS) | `876aabc` |
-| **Auth (Brute Force)** | Unbounded password guessing and infinite fresh OTP challenge generation across repeated logins | Implemented per-account in-memory sliding window limiter: 10 failed passwords or 20 OTP challenges per 15 min returns 429 `too_many_login_attempts`. Successful logins do not count as failures | `apps/api/src/auth/loginThrottle.new.test.ts` (6/6 PASS) | `7bd05ab` |
-| **Data Export (CSV)** | Formula injection via customer-controlled references starting with `= + - @ \t \r` | Sanitized exported CSV cells: prefix matching formula triggers with single quote (`'`) | `apps/api/src/transactions/exportCsv.formula.new.test.ts` (4/4 PASS) | `a76f610` |
-| **Credentials** | Key hash leaked on unauthenticated payment link read | Replaced `merchantIntegrationId` with `null` | Live public read response; `publicRead.new.test.ts` | `8eb377d` |
-| **Authorization** | Impersonation grant (support role) permitted transaction capture and void | Gated `/capture` and `/void` to `owner` and `finance` roles | `transactions.impersonation.new.test.ts` (4/4 PASS) | `619f18a` |
-| **Credentials** | Re-rotating an already-rotated key re-activated the expired key | Refused re-rotation with 409 `api_key_already_rotated` | `apiKeysRerotate.new.test.ts` (3/3 PASS) | `e000cf0` |
+| **Webhooks (SSRF)** | Private/loopback destination SSRF; unconstrained redirects and unbounded read buffer | Enforced production SSRF guard rejecting private, loopback, link-local, CGNAT, multicast IPs on registration and pre-dispatch resolution; disabled redirects; capped response buffer at 64 KiB | `apps/api/src/webhooks/ssrfGuard.new.test.ts` (5 tests, pass) | `876aabc` |
+| **Auth (Brute Force)** | Unbounded password guessing and infinite fresh OTP challenge generation across repeated logins | Implemented per-account in-memory sliding window limiter: 10 failed passwords or 20 OTP challenges per 15 min returns 429 `too_many_login_attempts`. Successful logins do not count as failures | `apps/api/src/auth/loginThrottle.new.test.ts` (3 tests, pass) | `7bd05ab` |
+| **Data Export (CSV)** | Formula injection via customer-controlled references starting with `= + - @ \t \r` | Sanitized exported CSV cells: prefix matching formula triggers with single quote (`'`) | `apps/api/src/transactions/exportCsv.formula.new.test.ts` (1 test, pass) | `a76f610` |
+| **Credentials** | Key hash leaked on unauthenticated payment link read | Removed `merchantIntegrationId` from the public response | Live public read response; `publicRead.new.test.ts` | `8eb377d` |
+| **Authorization** | Impersonation grant (support role) permitted transaction capture and void | Gated `/capture` and `/void` to `owner` and `finance` roles | `transactions.impersonation.new.test.ts` (1 test, pass) | `619f18a` |
+| **Credentials** | Re-rotating an already-rotated key re-activated the expired key | Refused re-rotation with 409 `api_key_already_rotated` | `apiKeysRerotate.new.test.ts` (1 test, pass) | `e000cf0` |
 
 ## Capacity, Resilience & Load Testing
 
