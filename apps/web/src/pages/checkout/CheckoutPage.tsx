@@ -9,6 +9,7 @@ import "./CheckoutPage.css";
 type LoadState =
   | { kind: "loading" }
   | { kind: "not_found" }
+  | { kind: "unavailable" }
   | { kind: "loaded"; link: PaymentLinkPublicDto };
 
 type PayState =
@@ -23,6 +24,7 @@ const EMPTY_CARD: SimulatedCardInput = { pan: "", expiryMonth: 1, expiryYear: ne
 export function CheckoutPage() {
   const { token } = useParams<{ token: string }>();
   const [loadState, setLoadState] = useState<LoadState>({ kind: "loading" });
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [payState, setPayState] = useState<PayState>({ kind: "idle" });
   const [card, setCard] = useState<SimulatedCardInput>(EMPTY_CARD);
   const [brandHint, setBrandHint] = useState<string | null>(null);
@@ -39,15 +41,18 @@ export function CheckoutPage() {
       .then((link) => {
         if (!cancelled) setLoadState({ kind: "loaded", link });
       })
-      .catch(() => {
-        // Never distinguishes "malformed token" from "doesn't exist" —
-        // matches the API's own non-disclosure choice.
-        if (!cancelled) setLoadState({ kind: "not_found" });
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Only a 404 means "not found"; it never distinguishes "malformed
+        // token" from "doesn't exist", matching the API's non-disclosure.
+        // Anything else (503 under load, a network error) is temporary.
+        const notFound = err instanceof ApiError && err.statusCode === 404;
+        setLoadState({ kind: notFound ? "not_found" : "unavailable" });
       });
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, loadAttempt]);
 
   async function handleSubmit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -78,6 +83,13 @@ export function CheckoutPage() {
           setPayState({ kind: "declined", message: "A payment is already being processed for this link. Please try again shortly.", retryable: true });
         } else if (statusCode === 410) {
           setPayState({ kind: "terminal", message: "This payment link has expired." });
+        } else if (statusCode === 503) {
+          // The API sheds load before any payment work starts, so nothing was charged.
+          setPayState({
+            kind: "declined",
+            message: "We're handling a lot of payments right now. Your card has not been charged. Please try again in a few seconds.",
+            retryable: true,
+          });
         } else {
           setPayState({ kind: "declined", message: body.message ?? "Something went wrong. Please try again.", retryable: true });
         }
@@ -100,6 +112,24 @@ export function CheckoutPage() {
       <main className="checkout-page">
         <h1>Payment link not found</h1>
         <p>This payment link does not exist.</p>
+      </main>
+    );
+  }
+
+  if (loadState.kind === "unavailable") {
+    return (
+      <main className="checkout-page">
+        <h1>Checkout is temporarily unavailable</h1>
+        <p>We couldn't load this payment right now. Nothing has been charged.</p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoadState({ kind: "loading" });
+            setLoadAttempt((n) => n + 1);
+          }}
+        >
+          Try again
+        </button>
       </main>
     );
   }
