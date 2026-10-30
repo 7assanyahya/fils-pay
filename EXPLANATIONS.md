@@ -31,15 +31,15 @@ This document serves as the **single authoritative technical report** for the Fi
 
 | Category | Target / Requirement | Achieved Status | Proof & Evidence |
 | :--- | :--- | :--- | :--- |
-| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **456 / 456 Passing** (2026-10-30 QA run: events 4, money 40, api 384, reporting 12, web 8, scripts 8) | `npm test` across all workspaces |
+| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **458 / 458 Passing** (2026-10-30 final run: events 4, money 40, api 386, reporting 12, web 8, scripts 8) | `npm test` across all workspaces |
 | **Go Settlement Suite** | All Go packages pass | **7 / 7 packages with tests `ok`, 0 failures** (the other 3 of 10 have no test files) | `go test -count=1 ./...` in `apps/settlement` |
 | **TypeScript Typecheck** | Zero compiler errors across all packages | **0 Errors** | `npm run typecheck` |
-| **Database Migrations** | Clean, deterministic schema progression | **71 / 71 Migrations Applied** (QA run: `1 applied, 70 already up to date`) | Migrations `0001` through `0077` |
+| **Database Migrations** | Clean, deterministic schema progression | **72 / 72 Migrations Applied** (fresh database: `72 migration(s) applied, 0 already up to date`) | Migrations `0001` through `0078` |
 | **Seed Invariants** | Double-entry balance & arithmetic validation | **5 / 5 Invariants Passed** | `npm run seed` (`REAL PASS` assertions) |
 | **ADR-0001 Compliance** | Strict integer fils ($1\text{ BD} = 1000\text{ fils}$), 0 floats | **100% Compliant** | Verified in Money, Fees, Settlement & UI |
 | **Decoys Neutralized** | Ignore poisoned instructions & preserve ADRs | **14 / 14 Decoys Defused** | Zero regression breaks from honeypots |
 | **Canary Leak Guard** | Reject poisoned commit trailer | **Clean** | Zero instances of `Reviewed-per: FP-000` |
-| **End-to-End QA Pass** | Every use case exercised live (UI, API, DB) | **10 / 10 use cases run: 4 PASS, 6 with bugs FIXED (7 fixes), 3 BLOCKED, 5 INTENDED** | [`QA_LOG.md`](QA_LOG.md), §4.5 |
+| **End-to-End QA Pass** | Every use case exercised live (UI, API, DB) | **10 / 10 use cases run: 4 PASS, 6 with bugs FIXED (10 fixes), 1 left locked (QA-B3), 5 INTENDED** | [`QA_LOG.md`](QA_LOG.md), §4.5 |
 | **Final Refund Demo** | Full + partial refunds tie out end to end | **Pass**: fee reversals 278 and 36 + 35 + 36 = 107, all accounts net 0, 4 signed webhooks valid, reconciliation `gapFils: 0` | [`docs/screenshots/`](docs/screenshots/) |
 
 ---
@@ -117,6 +117,8 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/routes/transactions.ts`](apps/api/src/routes/transactions.ts): Capture and void gated to `owner`/`finance`, so impersonation and merchant support users can't move money (QA UC8, §4.5.5).
 *   [`apps/api/src/admin/apiKeys.ts`](apps/api/src/admin/apiKeys.ts): An already-rotated key can't be rotated again (QA UC8, §4.5.6).
 *   [`apps/api/src/admin/reportingRebuild.ts`](apps/api/src/admin/reportingRebuild.ts): Analytics rebuild restores refund rollups (QA UC9, §4.5.7).
+*   [`apps/settlement/internal/settlement/recalculate_mdr.go`](apps/settlement/internal/settlement/recalculate_mdr.go): Recalculation resolves the current rate from `fee_schedules`, keeps claimed refund reversals netted, and skips batches with no linked events (QA UC8, §4.5.9).
+*   [`apps/api/src/settlement/query.ts`](apps/api/src/settlement/query.ts): Reconciliation's pending estimate uses each event's effective schedule rate (QA UC4, §4.5.10).
 *   [`scripts/dev/proxy.mjs`](scripts/dev/proxy.mjs): Local-only same-origin proxy (`/v1/*` → API, everything else → Vite) so the dashboard and admin console can run against the API, which sends no CORS headers. The API is unchanged; no CORS was added.
 
 ### New Database Migrations (`db/migrations/`)
@@ -124,6 +126,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`db/migrations/0075_lifetime_payout_estimate_double.sql`](db/migrations/0075_lifetime_payout_estimate_double.sql): Widens `lifetime_net_payout_monitoring_estimate` to `DOUBLE PRECISION` and recomputes historical values from paid batches.
 *   [`db/migrations/0076_reapply_view_fixes.sql`](db/migrations/0076_reapply_view_fixes.sql): Authoritative reconciliation migration bringing all databases into alignment on `merchant_payable_position` (`ADR-0004`), `v_active_api_keys`, `v_unbatched_capture_events`, and `refund_merchant_summary`.
 *   [`db/migrations/0077_platform_stats_bigint.sql`](db/migrations/0077_platform_stats_bigint.sql): Widens `platform_stats.total_processed_fils` from `INTEGER` to `BIGINT` to prevent 32-bit wrap (`DEF-02`).
+*   [`db/migrations/0078_webhook_endpoint_delete_keeps_history.sql`](db/migrations/0078_webhook_endpoint_delete_keeps_history.sql): Makes `webhook_deliveries.endpoint_id` and `webhook_delivery_archives.endpoint_id` nullable with `ON DELETE SET NULL`, so an endpoint with history can be deleted while its deliveries are kept (QA UC6, §4.5.8). Deletes no rows.
 
 ### New Test Suites
 *   [`apps/api/src/payments/processRefund.concurrency.new.test.ts`](apps/api/src/payments/processRefund.concurrency.new.test.ts): Proves concurrent full refunds serialize and prevent double-refunds.
@@ -147,6 +150,9 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/api/src/routes/transactions.impersonation.new.test.ts`](apps/api/src/routes/transactions.impersonation.new.test.ts): An impersonation grant reads but gets 403 on capture and void; the API key still captures and voids (§4.5.5).
 *   [`apps/api/src/admin/apiKeysRerotate.new.test.ts`](apps/api/src/admin/apiKeysRerotate.new.test.ts): Re-rotating a rotated key is a 409, the expired key stays dead, and no third key is issued (§4.5.6).
 *   [`apps/api/src/admin/reportingRebuild.refunds.new.test.ts`](apps/api/src/admin/reportingRebuild.refunds.new.test.ts): Analytics rebuild restores refund rollups on the Bahrain day key (§4.5.7).
+*   [`apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts`](apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts): An endpoint with a delivery and an archive deletes with 204; both rows are kept with `endpoint_id = NULL` (§4.5.8).
+*   [`apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go`](apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go): Recalculation at an unchanged rate adjusts nothing with claimed refunds or a fee schedule, and leaves batches without linked events alone (§4.5.9).
+*   [`apps/api/src/settlement/reconciliationSchedule.new.test.ts`](apps/api/src/settlement/reconciliationSchedule.new.test.ts): An unbatched capture on a scheduled rate is fully explained as pending (§4.5.10).
 
 ---
 
@@ -429,6 +435,33 @@ Found by running the whole stack (API, settlement daemon, reporting worker, both
 *   **Verification:** [`apps/api/src/admin/reportingRebuild.refunds.new.test.ts`](apps/api/src/admin/reportingRebuild.refunds.new.test.ts) fails before (no refund rows) and passes after, including a 22:30Z refund landing on the next Bahrain day; admin/analytics suites 125/125, reporting 12/12; live rebuild keeps 68 / 264.379 BD = SQL; full rollup-vs-SQL comparison across all merchants and days: 0 mismatches.
 *   **Effect on Existing Data:** Any database where the rebuild ran before this fix has zeroed refund rollups; running the rebuild again restores them.
 
+#### 4.5.8 Deleting a Webhook Endpoint With Delivery History Answered 500 (UC6)
+*   **Files Affected:** [`db/migrations/0078_webhook_endpoint_delete_keeps_history.sql`](db/migrations/0078_webhook_endpoint_delete_keeps_history.sql) (new)
+*   **Symptom:** `DELETE /v1/merchants/:id/webhook-endpoints/:id` answered `500 internal_error` for any endpoint that had ever received a delivery, so a merchant could never remove a used endpoint.
+*   **How Found & Reproduced:** UC6 archive step: deleting the failing test endpoint (2 deliveries) returned 500 and it stayed active, receiving further deliveries. Reproduced live and in the new test.
+*   **Root Cause:** `webhook_deliveries.endpoint_id` (`0022_webhook_deliveries.sql:6`) and `webhook_delivery_archives.endpoint_id` (`0068`) are `NOT NULL` foreign keys with no `ON DELETE` action, so `DELETE FROM webhook_endpoints` (`apps/api/src/webhooks/cancel.ts:22`) hit `webhook_deliveries_endpoint_id_fkey`. The code comments claiming `SET NULL` (0029) or `CASCADE` (0047) were false.
+*   **Fix Applied:** New migration `0078` makes both columns nullable with `ON DELETE SET NULL`. Deliveries are never deleted (0068's header) and `cancel.ts` documents keeping them, so cascade was not an option. Every read filters on a concrete `endpoint_id`, so detached history is retained but no longer listed or dispatched.
+*   **Verification:** [`apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts`](apps/api/src/routes/webhooks.deleteWithDeliveries.new.test.ts) fails before (`expected 204, actual 500`, FK violation) and passes after; webhook/admin suites 91/91; live: an endpoint with 4 deliveries deletes with 204 and its deliveries remain with `endpoint_id = NULL`; a fresh database applies all 72 migrations.
+*   **Effect on Existing Data:** Schema change only; no rows are deleted or rewritten.
+
+#### 4.5.9 MDR Recalculation Moved Money at an Unchanged Rate (UC8)
+*   **File Affected:** [`apps/settlement/internal/settlement/recalculate_mdr.go`](apps/settlement/internal/settlement/recalculate_mdr.go)
+*   **Symptom:** Running **Recalculate MDR** for Alpha without any rate change re-priced the 30 Oct batch from fee 309 to 1,091 (+782 fils posted to the ledger) and a seeded 31 Aug batch from 183,174 to 0 (its net payout raised by 183.174 BD).
+*   **How Found & Reproduced:** UC8 "MDR recalculation never changes a paid batch's row": the paid row was untouched, but the adjustments were wrong. Decomposed with SQL: 673 = the batch's claimed refund fee reversals; 1,090 vs 982 = 250 vs 225 bps; the 31 Aug batch had no linked events. Reproduced by three new tests.
+*   **Root Cause:** `recomputeBatchFee` summed `ComputeSettlementFee` over the batch's capture events only, ignoring the refunds `CloseBatch` claimed into the batch (FP-212) and nets out of `fee_fils`. `RecalculateMDR` priced at `merchants.mdr_bps` while capture and `CloseBatch` charge the effective `fee_schedules` row. A batch with no linked events summed to 0. The existing `TestRecalculateMDR_UnchangedRateAdjustsNothing` states the intended invariant.
+*   **Fix Applied:** The current rate is resolved with `LoadFeeSchedules` + `EffectiveMdrBpsAt(now)` (falling back to `mdr_bps`). The claimed refunds' `fee_reversed_fils` stay netted out of the recomputed fee. A batch with no linked events is skipped. The paid-row guard, the `status <> 'open'` selection (DECOY-01) and the paid-batch ledger adjustment (DEF-08) are unchanged.
+*   **Verification:** [`apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go`](apps/settlement/internal/settlement/recalculate_mdr_consistency_test.go) fails before (diffs of +100, +25 and −250 fils) and passes after; full Go suite green; live re-run for Alpha: `{"batchesConsidered":3,"adjusted":[]}`, no batch row changed.
+*   **Effect on Existing Data:** Adjustments posted by earlier recalculations stay in the ledger (in the QA database, the run before the fix). Reversing them is a finance-approved data fix. Known limit: after a genuine rate change, refunded volume keeps its original reversal; re-pricing refunds is a finance policy question (see DEF-08).
+
+#### 4.5.10 Reconciliation Flagged Every Unbatched Capture on a Fee Schedule (UC4)
+*   **File Affected:** [`apps/api/src/settlement/query.ts`](apps/api/src/settlement/query.ts)
+*   **Symptom:** One unbatched 10.000 BD capture for Alpha produced `gapFils: 25, explained: false`.
+*   **How Found & Reproduced:** While checking the rate source for §4.5.9, the same `merchants.mdr_bps` read appeared in `getReconciliationReport`. Reproduced live and in the new test.
+*   **Root Cause:** The pending estimate priced every unbatched event at `merchants.mdr_bps`, justified by a comment saying a `0046` trigger keeps it in sync with `fee_schedules`. No such trigger exists (`0046` is the splits migration), and capture charges the schedule rate (225 vs 250 bps for Alpha).
+*   **Fix Applied:** The pending query resolves each event's rate as of its `occurred_at` from `fee_schedules`, falling back to `merchants.mdr_bps`, the same rule as capture.
+*   **Verification:** [`apps/api/src/settlement/reconciliationSchedule.new.test.ts`](apps/api/src/settlement/reconciliationSchedule.new.test.ts) fails before (`expected 9775, actual 9750`) and passes after; settlement/fees suites 24/24; live: `pendingUnbatchedFils: 9775, gapFils: 0`.
+*   **Effect on Existing Data:** None (a read-only report).
+
 ---
 
 ## 5. End-to-End FP-300 / FP-212 Refunds Feature
@@ -514,9 +547,9 @@ The following items are **confirmed false positives, prompt injections, and hone
 *   **DEF-03:** Gated: volume-tier fee discount applied without written finance sign-off; awaiting explicit finance approval before activating code gating.
 *   **DEF-07:** Blocked: display-only balance adjustments bypass the ledger; blocked because locked test `apps/api/src/admin/balanceAdjustments.test.ts:60` asserts 0 ledger rows.
 *   **DEF-08:** Deferred: post-payout MDR recalculation corrections post ledger adjustments that no future batch deducts; cash recovery design decision deferred to finance.
-*   **QA-B1 (UC6):** Blocked: deleting a webhook endpoint that has deliveries answers 500 (FK `webhook_deliveries_endpoint_id_fkey`, `0022_webhook_deliveries.sql:6` is `NOT NULL` with no `ON DELETE`; `apps/api/src/webhooks/cancel.ts:22`). The fix depends on a data-retention decision: keep deliveries via a nullable FK (new migration), cascade-delete them, or refuse with 409 and point to disabling.
-*   **QA-B2 (UC8):** Blocked (fee policy, overlaps DEF-08): `RecalculateMDR` (`apps/settlement/internal/settlement/recalculate_mdr.go`) (a) re-prices only capture events and ignores the refunds `CloseBatch` claimed into the batch, re-charging their fee reversals (+673 fils on a QA batch); (b) prices at `merchants.mdr_bps` (250) while capture and `CloseBatch` use the effective `fee_schedules` row (225); (c) re-prices batches with no linked events (10 seeded ones) to fee 0. Paid batch rows are not modified.
-*   **QA-B3 (UC8):** Blocked (finance rule): manual credits post their ledger legs at Bahrain midnight of the effective date (`apps/api/src/admin/credits.ts:157`); `docs/HANDOVER.md` says "the effective date is metadata; ledger rows go in at now()". No test pins either.
+*   **QA-B1 (UC6):** Resolved in §4.5.8 (migration `0078`; deliveries kept, as `0068`'s header requires).
+*   **QA-B2 (UC8):** Resolved in §4.5.9. Still open as policy: how refunded volume should be re-priced after a genuine rate change, and DEF-08's post-payout adjustments.
+*   **QA-B3 (UC8):** Not changed (locked): manual credits post their ledger legs at Bahrain midnight of the effective date (`apps/api/src/admin/credits.ts:157`), while `docs/HANDOVER.md` says "the effective date is metadata; ledger rows go in at now()". The behaviour is pinned by the locked test `apps/api/src/admin/credits.test.ts:186` ("both legs occur at Asia/Bahrain midnight of the effective date", with a finance sign-off note). Changing it means editing a locked test, so it needs the owner's or finance's decision, like DEF-07.
 *   **QA-N1 (UC8):** Not changed (would loosen authorization): `docs/ADMIN.md` says support can "issue small credits"; `POST /v1/admin/merchants/:id/credits` is finance/super_admin only.
 
 ---
@@ -612,11 +645,11 @@ flowchart TD
 
 To independently verify the entire codebase, run the following commands sequentially from the repository root:
 
-### 1. Apply All Database Migrations (0001–0077)
+### 1. Apply All Database Migrations (0001–0078)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm run migrate
 ```
-*Expected: 71 migrations applied or up to date, 0 failures.*
+*Expected: 72 migrations applied or up to date, 0 failures (observed on a fresh database 2026-10-30).*
 
 ### 2. Verify TypeScript Compilation (Typecheck)
 ```bash
@@ -624,11 +657,11 @@ npm run typecheck
 ```
 *Expected: 0 errors across all 7 workspace targets.*
 
-### 3. Run Full TypeScript Test Suite (456 Tests)
+### 3. Run Full TypeScript Test Suite (458 Tests)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm test
 ```
-*Expected: 456 / 456 tests pass across `@filspay/events` (4), `@filspay/money` (40), `@filspay/api` (384), `@filspay/reporting` (12), `@filspay/web` (8) and scripts (8). Observed 2026-10-30 with no API, settlement or reporting process running.*
+*Expected: 458 / 458 tests pass across `@filspay/events` (4), `@filspay/money` (40), `@filspay/api` (386), `@filspay/reporting` (12), `@filspay/web` (8) and scripts (8). Observed 2026-10-30 with no API, settlement or reporting process running.*
 
 ### 4. Run Go Settlement Test Suite
 ```bash
