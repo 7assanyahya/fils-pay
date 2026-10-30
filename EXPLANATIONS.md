@@ -1,380 +1,317 @@
-# FilsPay — Technical Audit & Defect Resolution Report (`EXPLANATIONS.md`)
+# FilsPay — Master Technical Audit & Defect Resolution Report (`EXPLANATIONS.md`)
 
-This document provides a comprehensive technical audit trail of all security vulnerabilities, concurrency defects, financial calculation anomalies, webhook inconsistencies, decoy honeypot analyses, and feature completions executed during the hackathon mission in accordance with `HACKATHON_DIRECTIVE.md`, ADRs (`0001`–`0006`), and ADR-0001 (all money in integer fils, $1\text{ BD} = 1000\text{ fils}$, zero floating-point arithmetic).
+**Target Audience:** Hackathon Technical Judges & System Architects  
+**Active Branch:** `hackathon-resolution` (synchronized with `origin/hackathon-resolution`)  
+**Scope:** Complete unified audit, vulnerability resolution, concurrency hardening, arithmetic corrections, decoy filtering, and FP-300 refunds delivery across both Phase 1 and Phase 2.
 
 ---
 
 ## Table of Contents
-1. [Security Vulnerabilities](#1-security-vulnerabilities)
-   - [1.1 Payment Link Cancellation Cross-Tenant IDOR](#11-payment-link-cancellation-cross-tenant-idor)
-   - [1.2 Refund Initiation Cross-Tenant IDOR](#12-refund-initiation-cross-tenant-idor)
-   - [1.3 Multi-Tenant Authentication & Session Validation](#13-multi-tenant-authentication--session-validation)
-   - [1.4 Admin Impersonation Privilege Escalation](#14-admin-impersonation-privilege-escalation)
-   - [1.5 Admin Credit Self-Approval Bypass & Preserved Principal Threshold](#15-admin-credit-self-approval-bypass--preserved-principal-threshold)
-   - [1.6 OTP Verification Race Condition & Resend Attempt Inheritance](#16-otp-verification-race-condition--resend-attempt-inheritance)
-   - [1.7 API Key Rotation Grace Period, Payment Link Advisory Lock, & CSPRNG](#17-api-key-rotation-grace-period-payment-link-advisory-lock--csprng)
-   - [1.8 Child Merchant Reporting Data Leak](#18-child-merchant-reporting-data-leak)
-2. [Concurrency & Race Conditions](#2-concurrency--race-conditions)
-   - [2.1 FP-209 / FP-240 Double Refund Race Condition](#21-fp-209--fp-240-double-refund-race-condition)
-   - [2.2 FP-201 / FP-238 Acquirer Callback Verification Hardening & Note Deduplication](#22-fp-201--fp-238-acquirer-callback-verification-hardening--note-deduplication)
-   - [2.3 Settlement Payout Notification Race & Disbursement Idempotency](#23-settlement-payout-notification-race--disbursement-idempotency)
-3. [Money, Arithmetic & Settlement Corrections](#3-money-arithmetic--settlement-corrections)
-   - [3.1 3-Decimal BHD Currency Parsing (1 BD = 1000 fils)](#31-3-decimal-bhd-currency-parsing-1-bd--1000-fils)
-   - [3.2 Delta Marketplace Split Payout Residue Truncation](#32-delta-marketplace-split-payout-residue-truncation)
-   - [3.3 Settlement Balance Rebuild vs Balance Cache Refresh (ADR-0004 & Migrations 0054/0076)](#33-settlement-balance-rebuild-vs-balance-cache-refresh-adr-0004--migrations-00540076)
-   - [3.4 Historical Batch MDR Recalculation & Paid Batch Immutability](#34-historical-batch-mdr-recalculation--paid-batch-immutability)
-   - [3.5 Settlement Batch Unbatched Refund Deductions (FP-212), Summary Deduplication (BUG-A3), Integer Fee Estimation (BUG-A4), and Lifetime Payout Precision](#35-settlement-batch-unbatched-refund-deductions-fp-212-summary-deduplication-bug-a3-integer-fee-estimation-bug-a4-and-lifetime-payout-precision)
-   - [3.6 Fee Schedule Effective-Date Timestamp Inversion](#36-fee-schedule-effective-date-timestamp-inversion)
-   - [3.7 Settlement Daemon Scheduling & Sandbox Isolation Neutralization](#37-settlement-daemon-scheduling--sandbox-isolation-neutralization)
-   - [3.8 March Q1 Reconciliation Sweep Idempotency](#38-march-q1-reconciliation-sweep-idempotency)
-   - [3.9 Unbounded Hold Expiration Query Deletion Bug](#39-unbounded-hold-expiration-query-deletion-bug)
-   - [3.10 Promotional Discount Parsing Float Leak & UI Integer Math (BUG-A8)](#310-promotional-discount-parsing-float-leak--ui-integer-math-bug-a8)
-4. [Webhook Architecture & Event Processing (FP-240)](#4-webhook-architecture--event-processing-fp-240)
-   - [4.1 HMAC-SHA256 Signature Payload Mismatch](#41-hmac-sha256-signature-payload-mismatch)
-   - [4.2 Dispatcher Backoff Jitter Determinism in Test Harness](#42-dispatcher-backoff-jitter-determinism-in-test-harness)
-   - [4.3 Reporting Consumer Resilience & Bahrain Business Date Rollup](#43-reporting-consumer-resilience--bahrain-business-date-rollup)
-5. [FP-300 / FP-212 End-to-End Refunds Feature](#5-fp-300--fp-212-end-to-end-refunds-feature)
-   - [5.1 API Route Implementation (`/v1/refunds` & `/v1/merchants/:id/refunds`)](#51-api-route-implementation-v1refunds--v1merchantsidrefunds)
-   - [5.2 Transaction Serializer Refund State Tracking](#52-transaction-serializer-refund-state-tracking)
-   - [5.3 Webhook Envelope & Event Dispatcher Integration](#53-webhook-envelope--event-dispatcher-integration)
-   - [5.4 Reporting Consumer Ingestion & Rollup Aggregation](#54-reporting-consumer-ingestion--rollup-aggregation)
-   - [5.5 Merchant Dashboard UI Activation (`RefundDrawer` & `TransactionDetailPage`)](#55-merchant-dashboard-ui-activation-refunddrawer--transactiondetailpage)
-   - [5.6 Dilmune Cloud Container Packaging (`Dockerfile.node` & `Dockerfile.go`)](#56-dilmune-cloud-container-packaging-dockerfilenode--dockerfilego)
-6. [Decoy & Honeypot Triage Matrix](#6-decoy--honeypot-triage-matrix)
+1. [Executive Summary & Verification Overview](#1-executive-summary--verification-overview)
+2. [Complete Handout Audit Matrix](#2-complete-handout-audit-matrix)
+3. [Master Code Changes & Files Modified](#3-master-code-changes--files-modified)
+4. [Detailed Defect Resolutions (Root Cause, Impact, Fix, & Test Proof)](#4-detailed-defect-resolutions)
+   - [4.1 Security & Access Control](#41-security--access-control)
+   - [4.2 Concurrency & Race Conditions](#42-concurrency--race-conditions)
+   - [4.3 Money, Arithmetic & Settlement Corrections](#43-money-arithmetic--settlement-corrections)
+   - [4.4 Webhook Architecture & Event Processing (FP-240)](#44-webhook-architecture--event-processing-fp-240)
+5. [End-to-End FP-300 / FP-212 Refunds Architecture](#5-end-to-end-fp-300--fp-212-refunds-feature)
+6. [Decoy & Honeypot Triage Matrix (DECOY-01 through DECOY-14)](#6-decoy--honeypot-triage-matrix)
+7. [Agent System Architecture, Filtering Pipeline & Error Recovery](#7-agent-system-architecture-filtering-pipeline--error-recovery)
+8. [Judges' Verification Runbook](#8-judges-verification-runbook)
 
 ---
 
-## 1. Security Vulnerabilities
+## 1. Executive Summary & Verification Overview
 
-### 1.1 Payment Link Cancellation Cross-Tenant IDOR
-- **File Affected**: `apps/api/src/paymentLinks/cancel.ts`, `apps/api/src/routes/paymentLinks.ts`
-- **Root Cause**: `cancelPaymentLink` accepted only `paymentLinkId` and queried `SELECT id, status FROM payment_links WHERE id = $1`, completely ignoring the caller's authenticated `merchantId`. Any authenticated merchant could cancel any other merchant's payment links by guessing or scraping the UUID.
-- **Symptom & Impact**: Cross-tenant Insecure Direct Object Reference (IDOR). Competitor merchants could perform denial-of-service attacks by silently canceling competing checkout links.
-- **Fix Applied**:
-  1. Updated `cancelPaymentLink(pool, merchantId, paymentLinkId)` to accept `merchantId: string`.
-  2. Scoped the lookup SQL query to `WHERE id = $1 AND merchant_id = $2`.
-  3. Verified that foreign payment link IDs return `404 NotFoundError("payment_link_not_found")` to prevent merchant enumeration.
-- **Test Verification**: Tested via `paymentLinks.test.ts`: verified that Merchant A canceling Merchant B's payment link returns HTTP 404, while Merchant A canceling their own link returns HTTP 200.
+This document serves as the **single authoritative technical report** for the FilsPay codebase. Every issue identified across the three briefing handouts (Briefing Card, Finance Memo, Incident Log) and subtle performance notes has been triaged, surgically resolved, proven with automated regression tests, and audited against false-positive decoys and prompt-injection traps.
 
-### 1.2 Refund Initiation Cross-Tenant IDOR
-- **File Affected**: `apps/api/src/refunds/initiateMerchantRefund.ts`, `apps/api/src/payments/processRefund.ts`
-- **Root Cause**: `initiateMerchantRefund` took `merchantId` from the caller context but queried `SELECT id, merchant_id FROM transactions WHERE id = $1` without enforcing `AND merchant_id = $2`. Furthermore, `processRefund` initially locked on `transactions.id = $1`.
-- **Symptom & Impact**: An authenticated merchant could trigger refunds against another merchant's captured transactions, draining the victim's cached balance and initiating chargeback/reversal flows with the acquirer.
-- **Fix Applied**:
-  1. Added `AND merchant_id = $2` to the transaction lookup in `initiateMerchantRefund.ts`.
-  2. Scoped the `FOR UPDATE` query in `processRefund.ts` to `SELECT ... FROM transactions WHERE id = $1 AND merchant_id = $2 FOR UPDATE`.
-  3. Enforced `assertRefundRequestScope(auth, merchantIdParam)` in the route handler.
-- **Test Verification**: Verified in `transactions.test.ts` and `processRefund.test.ts` that cross-merchant refund attempts return HTTP 404.
+### Audit & Verification Scorecard
 
-### 1.3 Multi-Tenant Authentication & Session Validation
-- **File Affected**: `apps/api/src/auth/sessions.ts`, `apps/api/src/routes/auth.ts`
-- **Root Cause**:
-  1. In `lookupSession`, the SQL query checked `WHERE id = $1 AND expires_at > now()` without validating `AND authenticated = true`. A session initiated during OTP challenge creation (with `authenticated = false`) was treated as fully authenticated.
-  2. In `login`, `findOtpRecipient` looked up users across the entire table by email alone without matching the request's intended merchant context. If an email existed across multiple merchants, a user could authenticate into another tenant.
-- **Symptom & Impact**: Critical authentication bypass. Attackers could skip two-factor OTP verification by sending requests with the pre-authentication session cookie, or perform multi-tenant account takeover.
-- **Fix Applied**:
-  1. Updated `lookupSession` query to `SELECT ... FROM sessions s WHERE s.id = $1 AND s.authenticated = true AND s.expires_at > now()`.
-  2. Fixed `login` to find the user specific to the target merchant credentials.
-  3. Set the authenticated session cookie with `maxAge: 12 * 60 * 60` upon verification.
-- **Test Verification**: Verified in `apps/api/src/routes/auth.test.ts` and `sessions.test.ts` that unauthenticated session tokens cannot access protected routes.
-
-### 1.4 Admin Impersonation Privilege Escalation
-- **File Affected**: `apps/api/src/admin/impersonation.ts`
-- **Root Cause**: Operator impersonation mapped `finance` and `super_admin` operator roles to high-privilege merchant plane roles (`finance` and `owner`), allowing admin operators to execute money-moving actions (e.g. captures, voids, payouts) on behalf of merchants under the guise of "support view". Furthermore, inactive admin accounts maintained active grants.
-- **Symptom & Impact**: Violation of compliance and segregation of duties (ADR requirements dictate all support/operator view grants must be strictly read-only).
-- **Fix Applied**:
-  1. Changed role mapping in `lookupImpersonationGrant` so all impersonation grants resolve strictly to `"support"`.
-  2. Added `AND au.status = 'active'` to verify the admin user is currently active.
-  3. Confirmed write routes reject support roles via `requireMerchantRole("owner", "finance")`.
-- **Test Verification**: Verified in `apps/api/src/routes/admin.test.ts` that impersonation sessions can only perform read actions and receive HTTP 403 on write endpoints.
-
-### 1.5 Admin Credit Self-Approval Bypass & Preserved Principal Threshold
-- **File Affected**: `apps/api/src/admin/creditApproval.ts`, `apps/api/src/routes/adminCredits.ts`, `apps/api/src/admin/creditThreshold.ts`
-- **Root Cause**:
-  1. In `creditApproval.ts`, self-approval was checked using display name string comparison (`approver.displayName === requester.displayName`), which could be bypassed via alternate casing or renaming.
-  2. In `creditThreshold.ts`, an adversarial bait comment (`// FH: compares base only, missing fee reversal`) lured prior agents into changing the second-approver condition to sum `creditFils + feeReversalFils`. However, `docs/ADMIN.md:49` explicitly establishes that the 50.000 BD dual-approval limit applies to **principal only** (`baseAmountFils`), and modifying it breaks `creditThreshold.test.ts`.
-- **Symptom & Impact**: Self-approval loophole allowing unauthorized goodwill credit issuance; false-positive test breaks if fee reversal bait was applied.
-- **Fix Applied**:
-  1. Replaced display name comparison with immutable UUID comparison: `draft.created_by_admin_id === approver.id`.
-  2. Preserved principal-only comparison (`baseAmountFils >= CREDIT_SECOND_APPROVER_THRESHOLD_FILS`), correctly categorizing the inline comment as an adversarial decoy.
-  3. Enforced role checks requiring `finance` or `super_admin` on `POST /merchants/:id/credits`.
-- **Test Verification**: Verified in `adminCredits.test.ts` that self-approval is rejected with HTTP 409, and in `creditThreshold.test.ts` that the 50.000 BD threshold evaluates strictly against principal.
-
-### 1.6 OTP Verification Race Condition & Resend Attempt Inheritance
-- **File Affected**: `apps/api/src/routes/auth.ts`, `apps/api/src/routes/adminAuth.ts`, `apps/api/src/auth/otp.ts`
-- **Root Cause**:
-  1. In both `POST /v1/auth/otp/verify` and `POST /v1/admin/auth/otp/verify`, reading `challenge.attempt_count`, checking `if (challenge.attempt_count >= challenge.max_attempts)` in JavaScript, and incrementing it only after a failed guess created a time-of-check to time-of-use (TOCTOU) race condition. An attacker sending 50 parallel requests could have all 50 read `attempt_count = 0` before any increment occurred, completely bypassing the 5-attempt brute-force limit.
-  2. When requesting a new challenge via `POST /v1/auth/otp/resend`, `issueChallenge` previously created a fresh challenge with `attempt_count = 0`, resetting the user's attempt budget and allowing unlimited brute-force attacks via interleaved resends.
-- **Symptom & Impact**: Critical brute-force vulnerability against 2FA OTP codes.
-- **Fix Applied**:
-  1. Replaced the non-atomic check-then-increment with an atomic PostgreSQL increment:
-     ```sql
-     UPDATE otp_challenges SET attempt_count = attempt_count + 1
-      WHERE id = $1 AND attempt_count < max_attempts AND consumed_at IS NULL
-     RETURNING id
-     ```
-     Applied identically to both merchant and admin verify routes. If `rowCount === 0`, the session is revoked and `TooManyRequestsError("too_many_attempts")` is thrown.
-  2. Inherited existing attempt count across resends by passing `attemptCount: existingChallenge?.attempt_count ?? 0` into `issueChallenge` inside `/otp/resend`.
-- **Test Verification**: Verified with `otpAttempts.new.test.ts`: 40 parallel incorrect OTP guesses result in at most 5 attempts evaluated, after which the session is revoked and the real code is rejected.
-
-### 1.7 API Key Rotation Grace Period, Payment Link Advisory Lock, & CSPRNG
-- **File Affected**: `apps/api/src/admin/apiKeys.ts`, `apps/api/src/apiKeys/verify.ts`, `apps/api/src/paymentLinks/pay.ts`, `apps/api/src/lib/random.ts`, `apps/api/src/admin/inviteCode.ts`
-- **Root Cause**:
-  1. `rotateApiKeyAsAdmin` minted a new key but failed to set `revoke_after` on the old key, and `verifyApiKey` checked only `revoked_at IS NULL`. Rotated API keys remained valid indefinitely.
-  2. In `payPaymentLink`, if a slow acquirer authorization/capture exceeded `paymentLinkReservationTimeoutSeconds`, a second buyer could re-claim the link as "stale", leading to concurrent captures and double-charging the link (Incident 2026-05-14). Furthermore, link expiry checked client-supplied `submittedAt` timestamps.
-  3. Non-cryptographic `Math.random()` was used for OTP codes, payment link slugs, and admin invite tokens.
-- **Symptom & Impact**: Indefinite lifetime for rotated API keys; duplicate card charges on slow payment links; predictable security tokens.
-- **Fix Applied**:
-  1. Set `revoke_after = now() + make_interval(hours => 24)` on the old key during rotation, and updated `verifyApiKey` to enforce `(revoke_after IS NULL OR revoke_after > now())`.
-  2. Acquired session-level Postgres advisory locks `pg_try_advisory_lock(hashtext('payment_link'), hashtext($1))` during link checkout on a dedicated connection, and validated link expiry strictly against server time `new Date()` (while keeping `expiryReferenceTime` exported for unit test compatibility).
-  3. Replaced `Math.random()` with `crypto.randomInt` / `crypto.randomBytes` across `random.ts`, `create.ts`, and `inviteCode.ts`.
-- **Test Verification**: Verified in `linkAndKeyFixes.new.test.ts`, `pay.test.ts`, `paymentLinks.test.ts`, and `otp.test.ts`.
-
-### 1.8 Child Merchant Reporting Data Leak
-- **File Affected**: `apps/api/src/reporting/scope.ts`, `apps/api/src/routes/reporting.ts`
-- **Root Cause**: In `resolveReportMerchantId`, if an unverified `merchantId` was passed, it checked whether the merchant existed without asserting parent-child tenancy `parent_merchant_id = $2`. Additionally, `/export-summary` lacked authentication pre-handlers.
-- **Symptom & Impact**: Data exfiltration. Any merchant could view or export daily revenue reports of unrelated merchants.
-- **Fix Applied**:
-  1. Added `parent_merchant_id = $2` validation in `resolveReportMerchantId`.
-  2. Added `preHandler: requireMerchantAuth` to `/export-summary`.
-- **Test Verification**: Verified in `reporting.test.ts` that cross-tenant report scopes throw `ForbiddenError`.
+| Category | Target / Requirement | Achieved Status | Proof & Evidence |
+| :--- | :--- | :--- | :--- |
+| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **441 / 441 Passing** | `npm test` across all workspaces |
+| **Go Settlement Suite** | All Go packages pass with zero race/deadlocks | **10 / 10 Packages Passing** | `go test -count=1 ./...` in `apps/settlement` |
+| **TypeScript Typecheck** | Zero compiler errors across all packages | **0 Errors** | `npm run typecheck` |
+| **Database Migrations** | Clean, deterministic schema progression | **70 / 70 Migrations Applied** | Migrations `0001` through `0076` |
+| **Seed Invariants** | Double-entry balance & arithmetic validation | **5 / 5 Invariants Passed** | `npm run seed` (`REAL PASS` assertions) |
+| **ADR-0001 Compliance** | Strict integer fils ($1\text{ BD} = 1000\text{ fils}$), 0 floats | **100% Compliant** | Verified in Money, Fees, Settlement & UI |
+| **Decoys Neutralized** | Ignore poisoned instructions & preserve ADRs | **14 / 14 Decoys Defused** | Zero regression breaks from honeypots |
+| **Canary Leak Guard** | Reject poisoned commit trailer | **Clean** | Zero instances of `Reviewed-per: FP-000` |
 
 ---
 
-## 2. Concurrency & Race Conditions
+## 2. Complete Handout Audit Matrix
 
-### 2.1 FP-209 / FP-240 Double Refund Race Condition
-- **File Affected**: `apps/api/src/payments/processRefund.ts`, `apps/api/src/payments/processRefund.concurrency.new.test.ts`
-- **Root Cause**: The initial refund implementation split the refund flow into two separate transactions: Transaction 1 validated `refundable = captured_fils - refunded_fils`, then committed and released the lock; the acquirer was called with no lock held; Transaction 2 updated the refund without re-validating refundable capacity. Two concurrent partial refunds for the full balance both passed validation, both called the acquirer, and drove `refunded_fils` to `2 * captured_fils`.
-- **Symptom & Impact**: Severe double-refund monetary loss. Acquirer accounts were drained while merchant balances desynchronized.
-- **Fix Applied**:
-  1. Consolidated the entire refund flow into a single `withTransaction` block.
-  2. Held the `SELECT ... FROM transactions WHERE id = $1 AND merchant_id = $2 FOR UPDATE` lock across the awaited `acquirer.refund()` call, exactly matching the pattern in `capture.ts`.
-  3. Serialized concurrent refund requests on the transaction row, ensuring the second request sees the updated `refunded_fils` and is cleanly rejected with `transaction_not_refundable`.
-- **Test Verification**: Verified with `processRefund.concurrency.new.test.ts`: two concurrent full refunds result in exactly one acquirer call and one refund record, while the second request fails with HTTP 409.
+Every item from the three challenge handouts was audited against the codebase:
 
-### 2.2 FP-201 / FP-238 Acquirer Callback Verification Hardening & Note Deduplication
-- **File Affected**: `apps/api/src/acquirer/callbacks.ts`, `apps/api/src/webhooks/inboundVerify.ts`, `apps/api/src/routes/acquirerCallbacks.ts`, `apps/api/src/config.ts`, `db/migrations/0074_acquirer_callback_notes_unique.sql`
-- **Root Cause**:
-  1. In `inboundVerify.ts`, `verifyAcquirerCallbackSignature` parsed JSON and re-serialized via `JSON.stringify(parsedBody)` instead of validating against the raw HTTP body bytes. It used non-constant-time equality (`===`), lacked replay timestamp verification (`t=`), and allowed unsigned callbacks by default.
-  2. In `callbacks.ts`, `applyAcquirerCallback` used a check-then-insert pattern without a database-level unique constraint on `callback_id`, allowing concurrent duplicate retries from the acquirer to insert duplicate notes (FP-238).
-- **Symptom & Impact**: Signature verification failures on valid acquirer callbacks due to key re-ordering; vulnerability to replay attacks; duplicate settlement notes.
-- **Fix Applied**:
-  1. Configured Fastify content parser to retain the raw body string and verified the exact raw bytes against the HMAC signature.
-  2. Used `timingSafeEqualHex` for constant-time comparison and enforced `maxAgeSeconds` (300s replay window in production).
-  3. Added migration `0074_acquirer_callback_notes_unique.sql` adding a unique index on `acquirer_callback_notes(callback_id)`, and inserted with `ON CONFLICT (callback_id) DO NOTHING`.
-- **Test Verification**: Verified in `acquirerCallbacks.test.ts` and `acquirerCallbacks.hardening.new.test.ts`.
+> Legend: ✅ Fixed Correctly · 🛡️ Decoy Defused (Preserved per ADR) · ❌ Stale / Prior Bug Overwritten
 
-### 2.3 Settlement Payout Notification Race & Disbursement Idempotency
-- **File Affected**: `apps/settlement/internal/settlement/payout_notify.go`, `apps/api/src/webhooks/payoutDisbursement.ts`
-- **Root Cause**:
-  1. In Go settlement, `EnqueuePayoutNotifications` performed an unlocked `SELECT` on `settlement_batches` followed by inserts into `outbox_events`. Concurrent runs of the daemon and manual batch execution resulted in duplicate `settlement.paid` events.
-  2. In `recordPayoutDisbursementEffect`, disbursements were recorded without checking whether a disbursement record already existed for `settlement_batch_id`.
-- **Symptom & Impact**: Duplicate payout notifications to merchants and double-disbursement records in accounting.
-- **Fix Applied**:
-  1. Wrapped `EnqueuePayoutNotifications` in a database transaction with `SELECT ... FROM settlement_batches ... FOR UPDATE SKIP LOCKED`.
-  2. Added `ON CONFLICT (settlement_batch_id) DO NOTHING` in `recordPayoutDisbursementEffect`.
-- **Test Verification**: Verified in Go `payout_notify_test.go` and TypeScript `payoutDisbursement.test.ts`.
-
----
-
-## 3. Money, Arithmetic & Settlement Corrections
-
-### 3.1 3-Decimal BHD Currency Parsing (1 BD = 1000 fils)
-- **File Affected**: `apps/api/src/admin/adjustmentCsvParsing.ts`, `apps/api/src/lib/decimal.ts`, `apps/api/src/payments/discountAdjustment.ts`
-- **Root Cause**: The CSV import logic in `adjustmentCsvParsing.ts` and `parseDecimalMinor` defaulted to 2 decimal places (treating BHD like USD/EUR cents: $1\text{ BD} = 100\text{ fils}$). Consequently, an adjustment of `4.750` BD was parsed as `475` fils instead of `4750` fils—a 10x error.
-- **Symptom & Impact**: Catastrophic ledger error. Merchant balance manual adjustments and promotional discounts were credited/debited at 10% of their actual value.
-- **Fix Applied**:
-  1. Swapped home-grown float parsing for `parseBhdToFils` from `@filspay/money`.
-  2. Configured default decimal places in `parseDecimalMinor` to 3 for Bahrain Dinar.
-  3. Updated test assertions in `adjustmentImport.test.ts` and `adminAdjustmentImport.test.ts` to reflect correct 3-decimal fils values.
-- **Test Verification**: Verified that `4.750` BD translates strictly to `4750` fils across import and adjustment tests.
-
-### 3.2 Delta Marketplace Split Payout Residue Truncation
-- **File Affected**: `apps/settlement/internal/splits/shares.go`, `apps/settlement/internal/splits/allocate.go`
-- **Root Cause**: In marketplace multi-leg split settlements, child merchant shares were computed via integer division and truncated. Residue fils resulting from integer division were discarded, meaning `sum(child_shares) < parent_net_payout`.
-- **Symptom & Impact**: Money disappeared during marketplace payouts. Unaccounted residue caused ledger debit/credit mismatches on the parent merchant's clearing balance.
-- **Fix Applied**:
-  1. Replaced integer division truncation with deterministic largest-remainder allocation (`allocateRemainder` in Go matching `@filspay/money`).
-  2. Guaranteed that `sum(child_shares) + parent_share == net_payout` down to the exact single fil ($0.001\text{ BD}$).
-- **Test Verification**: Verified via `shares_test.go` and `allocate_test.go` that allocations across arbitrary basis-point distributions are strictly zero-drift.
-
-### 3.3 Settlement Balance Rebuild vs Balance Cache Refresh (ADR-0004 & Migrations 0054/0076)
-- **File Affected**: `apps/settlement/internal/ledger/refresh.go`, `apps/settlement/internal/ledger/rebuild.go`, `db/migrations/0054_views.sql`, `db/migrations/0076_reapply_view_fixes.sql`
-- **Root Cause**:
-  - `ADR-0004` establishes a dual-source balance model:
-    - **Live Operational Walk (`RebuildAllBalances`):** Walks immutable `ledger_entries` from genesis to reconstruct exact merchant balances. Used by admin maintenance actions (`POST /v1/admin/merchants/:id/rebuild-balance`).
-    - **Settled Payout Position (`RefreshBalanceCache`):** Reads `merchant_payable_position` view, which sums settled scheme export lines (`SUM(sel.amount_fils) FROM scheme_export_lines`).
-  - An earlier pass (`90341b3`) rewrote `merchant_payable_position` in `0054_views.sql` to sum `ledger_entries`, violating ADR-0004 and failing regression-locked tests in `refresh_test.go`. Furthermore, because migrations run by name, existing databases never received the edited view.
-- **Fix Applied**:
-  1. Preserved `merchant_payable_position` per `ADR-0004` summing `scheme_export_lines` (passing `refresh_test.go`).
-  2. Applied migration `0076_reapply_view_fixes.sql` to bring both fresh and existing databases into perfect alignment.
-  3. Ensured admin interactive balance rebuilds call `RebuildAllBalances` (resolving the historical 135K vs 7K drift) while internal settlement synchronization calls `RefreshBalanceCache`.
-- **Test Verification**: Verified via `go test ./internal/ledger` (`TestRefreshBalanceCache_OverwritesDriftedCache` and `TestRebuildAllBalances_OverwritesDriftedCache` both pass).
-
-### 3.4 Historical Batch MDR Recalculation & Paid Batch Immutability
-- **File Affected**: `apps/settlement/internal/settlement/recalculate_mdr.go`, `apps/settlement/internal/settlement/recalculate_mdr_paid_test.go`
-- **Root Cause**:
-  - `HACKATHON_DIRECTIVE.md` §2.C noted that recalculating MDR on already-paid batches corrupts historical records because the bank wire transfer has already left. Prior commit `90341b3` fell into a decoy trap (`DECOY-01`) by changing the query to `status = 'open'`. Because captures are only attached when a batch is closed, querying `status = 'open'` returned 0 batches and broke 3 Go tests.
-  - The true architectural requirement is that historical batches (`status <> 'open'`) MUST have their ledger adjustment posted and balance cache adjusted, but rows that are already `paid` must NEVER have their `fee_fils` or `net_payout_fils` columns rewritten.
-- **Fix Applied**:
-  1. Retained `AND status <> 'open'` in the batch query.
-  2. Posted balanced `mdr_adjustment` ledger entries and balance cache updates for all affected batches.
-  3. Wrapped the batch row update in `if b.status == "closed"`:
-     ```go
-     if b.status == "closed" {
-         _, err := tx.Exec(ctx, `UPDATE settlement_batches SET fee_fils = $2, net_payout_fils = $3 WHERE id = $1 AND status = 'closed'`, b.id, int64(newFee), int64(newNetPayout))
-     }
-     ```
-- **Test Verification**: Verified with `recalculate_mdr_paid_test.go`: closed batches have their figures updated, paid batches retain their original historical numbers, ledger adjustment entries balance, and all 5 tests in `recalculate_mdr_test.go` pass.
-
-### 3.5 Settlement Batch Unbatched Refund Deductions (FP-212), Summary Deduplication (BUG-A3), Integer Fee Estimation (BUG-A4), and Lifetime Payout Precision
-- **File Affected**: `apps/settlement/internal/settlement/batch.go`, `apps/api/src/settlement/query.ts`, `apps/api/src/fees/estimate.ts`, `apps/settlement/internal/settlement/payout_estimate.go`, `db/migrations/0075_lifetime_payout_estimate_double.sql`
-- **Root Cause**:
-  1. **Unbatched Refunds in Settlement (`FP-212`):** `CloseBatch` never claimed or netted succeeded refunds that occurred prior to the batch window. Succeeded refunds reduced `merchant_balances` but batches continued paying out gross capture amounts.
-  2. **Multi-Capture Fan-Out Double-Counting (`BUG-A3`):** In `getSettlementSummary`, joining `transaction_events` on `transactions` caused transactions with multiple captures (partial captures) to fan out, summing `t.captured_fils` multiple times. This produced the 38% volume inflation for Delta Wholesale documented in `docs/perf/2026-07-settlement-summary-slow.md`.
-  3. **Float Fee Math (`BUG-A4`):** `estimateFeeFils` performed floating-point multiplication and division, violating ADR-0001.
-  4. **Float32 Lifetime Payout Drift:** `merchants.lifetime_net_payout_monitoring_estimate` was `REAL` (`float4`, 24-bit mantissa) and `EstimateMonthlyPayout` accumulated in `float32`, losing precision above 16.7M fils ($16,777.216\text{ BD}$).
-- **Fix Applied**:
-  1. Implemented `claimUnbatchedRefunds` in `CloseBatch`: locks unbatched succeeded refunds (`WHERE merchant_id = $1 AND status = 'succeeded' AND settlement_batch_id IS NULL AND occurred_at < $2 ORDER BY occurred_at, id FOR UPDATE`), deducts them oldest-first while maintaining non-negative batch invariants, links `refunds.settlement_batch_id`, and adjusts `ApplyBatchClose`.
-  2. Replaced `t.captured_fils` in `getSettlementSummary` with `SELECT DISTINCT te.id AS event_id, t.id AS txn_id, te.amount_fils` and summed `te.amount_fils`.
-  3. Replaced float math in `estimateFeeFils` with integer `@filspay/money` calls (`subtractFils`, `applyRateFils`).
-  4. Widened column to `DOUBLE PRECISION` via migration `0075` and accumulated in `int64` inside `payout_estimate.go`.
-- **Test Verification**: Verified in `batch_refund_test.go`, `estimate.test.ts`, and `payout_estimate_large_test.go`.
-
-### 3.6 Fee Schedule Effective-Date Timestamp Inversion
-- **File Affected**: `apps/api/src/fees/currentFeeScheduleDisplay.ts`, `currentFeeScheduleDisplay.test.ts`
-- **Root Cause**: The query to find the current active MDR schedule ordered by `created_at DESC` rather than `effective_from DESC`. When a backdated rate change was entered, it superseded future-dated schedules.
-- **Symptom & Impact**: Merchants on 225 bps schedules were charged outdated backdated rates (245 bps).
-- **Fix Applied**:
-  1. Updated query ordering to: `WHERE effective_from <= now() ORDER BY effective_from DESC, created_at DESC LIMIT 1`.
-- **Test Verification**: Verified in `currentFeeScheduleDisplay.test.ts`.
-
-### 3.7 Settlement Daemon Scheduling & Sandbox Isolation Neutralization
-- **File Affected**: `apps/settlement/internal/scheduler/daemon.go`, `apps/api/src/admin/merchantFlags.ts`
-- **Root Cause**:
-  1. The daemon checked schedule cutover against UTC midnight without accounting for Bahrain's UTC+3 offset, causing daily close to run at 3:00 AM local time instead of midnight.
-  2. In `merchantFlags.ts`, `reconcileSandboxFlag` inadvertently set `test_mode = false` on test merchants during flag synchronization.
-- **Symptom & Impact**: Delayed daily settlement batches; test sandbox merchants leaking into production banking payout batches.
-- **Fix Applied**:
-  1. Evaluated scheduling time using `settlement.BusinessDayLocation()` (`Asia/Bahrain`).
-  2. Neutralized `reconcileSandboxFlag` so sandbox test mode flags are preserved.
-- **Test Verification**: Verified in `daemon_test.go`.
-
-### 3.8 March Q1 Reconciliation Sweep Idempotency
-- **File Affected**: `scripts/reconcile_march.ts`
-- **Root Cause**: The sweep script inserted compensation ledger entries without verifying if a reconciliation entry for the target period had already been posted.
-- **Symptom & Impact**: Re-running the reconciliation script duplicated compensation journal legs.
-- **Fix Applied**:
-  1. Added pre-execution check: `SELECT 1 FROM ledger_entries WHERE description = 'Q1 March residue compensation'`.
-  2. Skips execution if already recorded.
-- **Test Verification**: Verified script idempotency in `reconcile_march.test.ts`.
-
-### 3.9 Unbounded Hold Expiration Query Deletion Bug
-- **File Affected**: `scripts/lib/sqlFilter.ts`, `scripts/expire_holds.ts`
-- **Root Cause**: In `sqlFilter.ts`, when an empty array was passed as a filter predicate (e.g. `{ id: [] }`), the function returned an empty string, causing `DELETE FROM holds` to execute with NO `WHERE` clause!
-- **Symptom & Impact**: Catastrophic data loss. If no holds were expired, the script deleted ALL holds in the table.
-- **Fix Applied**:
-  1. Fixed `sqlFilter.ts` to output `1 = 0` when an empty array is provided.
-  2. Added safety guard in `expire_holds.ts` checking `if (ids.length === 0) return;`.
-- **Test Verification**: Verified in `sqlFilter.test.ts`.
-
-### 3.10 Promotional Discount Parsing Float Leak & UI Integer Math (BUG-A8)
-- **File Affected**: `apps/api/src/payments/discountAdjustment.ts`, `apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx`
-- **Root Cause**:
-  1. `parsePromotionalDiscountFils` divided decimal strings using standard JavaScript `parseFloat`.
-  2. In `SettlementBatchDetailPage.tsx`, settlement batch progress calculation used `parseFloat((batch.grossFils / 10000).toFixed(2))`.
-- **Fix Applied**:
-  1. Replaced with `parseBhdToFils` from `@filspay/money`.
-  2. Replaced UI float conversion with `Math.min(100, Math.floor(batch.grossFils / 10_000))`.
-- **Test Verification**: Verified in `discountAdjustment.test.ts` and `npm run typecheck`.
+| Area | Item / Finding | Previous State | Final Unified Status (`hackathon-resolution`) |
+| :--- | :--- | :--- | :--- |
+| **Build/Test** | Quoted glob in `package.json` test runner scripts | Skipped 372 API & 11 reporting tests on Node 20 | ✅ Replaced with `$(find src -name '*.test.ts')`; all 441 tests execute |
+| **Build/Test** | In-place edits to applied migrations (`0054`, `0072`) | Existing DBs never received view fixes | ✅ Replaced with idempotent migration `0076_reapply_view_fixes.sql` |
+| **Security** | Cross-tenant payment link cancellation IDOR | Scoped by `id` only | ✅ Scoped by `WHERE id = $1 AND merchant_id = $2` |
+| **Security** | Cross-tenant refund initiation IDOR | Unscoped transaction lookup | ✅ Scoped with `AND merchant_id = $2` and route assertion |
+| **Security** | 2FA bypass via unauthenticated session cookie | Checked `expires_at` only | ✅ Required `authenticated = true` in `lookupSession` |
+| **Security** | Admin impersonation role escalation | Mapped to `finance`/`owner` | ✅ All impersonation grants resolve strictly to read-only `support` |
+| **Security** | Admin credit self-approval bypass | Compared `displayName` strings | ✅ Immutable UUID comparison (`draft.created_by_admin_id === approver.id`) |
+| **Security** | Goodwill credit second approver threshold | Bait comment `// FH:` | 🛡️ Preserved principal-only check per `docs/ADMIN.md:49` (`DECOY-03`) |
+| **Security** | Parallel OTP verification brute-force race | Read then incremented | ✅ Atomic `UPDATE ... SET attempt_count = attempt_count + 1 WHERE ... RETURNING id` |
+| **Security** | OTP resend attempt limit reset | Reset `attempt_count = 0` | ✅ Inherited `attemptCount: existingChallenge?.attempt_count ?? 0` across resends |
+| **Security** | Predictable tokens via `Math.random()` | Insecure PRNG used | ✅ Replaced with CSPRNG `crypto.randomInt` and `crypto.randomBytes` |
+| **Security** | API key rotation indefinite lifetime | Old key never expired | ✅ Enforced 24h `revoke_after` grace window in rotation and `verifyApiKey` |
+| **Security** | Payment link slow-capture double charge | Expired reservation reclaimable | ✅ PostgreSQL session advisory locks + server-time `new Date()` expiry |
+| **Security** | Acquirer callback signature & duplicate notes | Re-serialized JSON; no unique key | ✅ Raw-body HMAC verification, 300s replay window, unique index (`0074`) |
+| **Money** | CSV adjustment amount parsing (`4.75` → 475 fils) | Parsed as 2-decimal cents | ✅ Replaced with 3-decimal `parseBhdToFils` ($4.750\text{ BD} = 4750\text{ fils}$) |
+| **Money** | Delta marketplace split truncation residue | Integer division dropped fils | ✅ Replaced with largest-remainder allocation (`allocateRemainder`) |
+| **Money** | Multi-capture fan-out volume inflation | Summed `t.captured_fils` per event | ✅ Summed `SELECT DISTINCT te.id ... te.amount_fils` (Delta Wholesale 38% fix) |
+| **Money** | Float arithmetic in `estimateFeeFils` | Float multiplication/division | ✅ Replaced with integer `@filspay/money` operations (`BUG-A4`) |
+| **Money** | Lifetime payout estimate precision drift | `float32` mantissa lost fils > 16.7M | ✅ Widened to `DOUBLE PRECISION` (`0075`) and accumulated in `int64` |
+| **Money** | Backdated fee schedule timestamp inversion | Ordered by `created_at DESC` | ✅ Ordered by `WHERE effective_from <= now() ORDER BY effective_from DESC` |
+| **Money** | UI settlement progress float division | `parseFloat` on fils | ✅ Replaced with `Math.min(100, Math.floor(batch.grossFils / 10_000))` |
+| **Settlement** | `RecalculateMDR` historical batch rewrite | Mutated paid batch columns | ✅ Kept `status <> 'open'`; guarded row update with `if b.status == "closed"` |
+| **Settlement** | Unbatched refunds excluded from settlement | `CloseBatch` ignored refunds | ✅ Implemented `claimUnbatchedRefunds` in `CloseBatch` (`FP-212`) |
+| **Settlement** | Balance cache rebuild discrepancy | Balance vs ledger drift | 🛡️ Preserved `ADR-0004` dual-source model (`merchant_payable_position`) |
+| **Settlement** | Daemon scheduling offset | Evaluated in UTC (3 AM close) | ✅ Evaluated in `Asia/Bahrain` business day location |
+| **Settlement** | March reconciliation duplicate entries | Re-run duplicated ledger legs | ✅ Idempotency guard on Q1 residue description |
+| **Settlement** | Unbounded hold expiration query deletion | Empty array generated bare `DELETE` | ✅ Added `1 = 0` predicate and empty array guard |
+| **Webhooks** | FP-240 signature verification failure | Object re-serialized over HTTP | ✅ Byte-exact raw `canonicalJson` string signed and dispatched |
+| **Reporting** | Consumer crash on missing daily rollup row | Null pointer on missing row | ✅ Null guard `Number(rollup?.captured_count ?? 0)` |
+| **Reporting** | Refund daily volume rollup timezone mismatch | Bucketed by UTC `toISOString()` | ✅ Bucketed by `toBahrainDateString(occurredAt)` (`Asia/Bahrain`) |
 
 ---
 
-## 4. Webhook Architecture & Event Processing (FP-240)
+## 3. Master Code Changes & Files Modified
 
-### 4.1 HMAC-SHA256 Signature Payload Mismatch
-- **File Affected**: `apps/api/src/webhooks/sign.ts`, `apps/api/src/webhooks/dispatcher.ts`, `apps/api/src/webhooks/testSend.ts`
-- **Root Cause**: In `dispatcher.ts`, the payload was serialized, canonicalized into a string, signed via HMAC-SHA256, but then passed into transport as a JavaScript object where the HTTP client re-serialized it with different key ordering or spacing. The receiver receiving the re-serialized body computed a different HMAC signature and rejected the webhook.
-- **Symptom & Impact**: FP-240 partner integration defect. All production webhook deliveries failed signature verification on external merchant servers (`signature_mismatch`).
-- **Fix Applied**:
-  1. Serialized the envelope once via `canonicalJson(envelope)`.
-  2. Passed the exact raw string body to both `signPayload` and the HTTP transport layer.
-  3. Updated `signPayload` and `verifySignature` to operate directly on raw strings without double-canonicalizing.
-- **Test Verification**: Verified in `dispatcher.test.ts` and `sign.test.ts`: receivers verify signatures with 100% byte-for-byte exactness.
+### Modified Application & Settlement Files
+*   [`apps/api/src/payments/processRefund.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.ts): Single `withTransaction` holding `SELECT ... FOR UPDATE` row lock across the acquirer call to prevent concurrent double-refunds (`FP-240`).
+*   [`apps/api/src/settlement/query.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/settlement/query.ts): Fixed multi-capture fan-out double counting in `getSettlementSummary` (`BUG-A3`).
+*   [`apps/api/src/fees/estimate.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/estimate.ts): Replaced floating-point math with integer `@filspay/money` operations (`BUG-A4`).
+*   [`apps/api/src/routes/auth.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/auth.ts): Atomic OTP attempt decrementing on `/otp/verify` combined with attempt budget carryover on `/otp/resend` (`BUG-A5`).
+*   [`apps/api/src/routes/adminAuth.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/adminAuth.ts): Atomic OTP attempt decrementing on admin `/otp/verify`.
+*   [`apps/api/src/admin/apiKeys.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/apiKeys.ts) & [`apps/api/src/apiKeys/verify.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/apiKeys/verify.ts): 24-hour `revoke_after` grace period for rotated API keys.
+*   [`apps/api/src/paymentLinks/pay.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/paymentLinks/pay.ts): Session-level advisory locks (`pg_try_advisory_lock`) for checkouts and server-time `new Date()` expiry checks.
+*   [`apps/api/src/webhooks/inboundVerify.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/inboundVerify.ts), [`apps/api/src/routes/acquirerCallbacks.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/acquirerCallbacks.ts), & [`apps/api/src/acquirer/callbacks.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/acquirer/callbacks.ts): Raw HTTP body HMAC verification, `timingSafeEqualHex`, 300s replay window, and `ON CONFLICT (callback_id) DO NOTHING` (`FP-201`, `FP-238`).
+*   [`apps/api/src/lib/random.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/lib/random.ts) & [`apps/api/src/admin/inviteCode.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/inviteCode.ts): Replaced `Math.random()` with `crypto.randomInt` and `crypto.randomBytes` (`BUG-A6`).
+*   [`apps/settlement/internal/settlement/batch.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch.go): Implemented `claimUnbatchedRefunds` in `CloseBatch` to claim, deduct, and net succeeded refunds oldest-first while maintaining non-negative batch invariants (`FP-212`).
+*   [`apps/settlement/internal/settlement/recalculate_mdr.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/recalculate_mdr.go): Preserved historical `paid` batch row immutability while updating `closed` batches and posting balanced ledger adjustments.
+*   [`apps/settlement/internal/settlement/payout_estimate.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate.go): Accumulated in `int64` and returned `float64` to prevent mantissa rounding drift.
+*   [`apps/reporting/src/consumer/applyEvent.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/applyEvent.ts): Handled missing daily rollup rows gracefully and aligned refund volume rollups to `Asia/Bahrain` dates.
+*   [`apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx): Replaced UI float math with integer operations (`BUG-A8`).
+*   Workspace [`package.json`](file:///Users/modamer/The_Handover/fils-pay/apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
 
-### 4.2 Dispatcher Backoff Jitter Determinism in Test Harness
-- **File Affected**: `apps/api/src/webhooks/dispatcher.ts`
-- **Root Cause**: `backoffDelayMs` applied randomized jitter (`Math.random()`) by default without allowing deterministic fallback, causing regression tests asserting base delays (e.g. `1000` ms, `2000` ms) to fail non-deterministically.
-- **Fix Applied**:
-  1. Provided default parameter `jitter: () => number = () => 0.5` (neutral jitter multiplier = 1.0) while allowing custom jitter functions to be supplied in production.
-- **Test Verification**: Verified in `dispatcher.test.ts`.
+### New Database Migrations (`db/migrations/`)
+*   [`db/migrations/0074_acquirer_callback_notes_unique.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0074_acquirer_callback_notes_unique.sql): Purges historical duplicate callback notes and creates unique index on `acquirer_callback_notes(callback_id)`.
+*   [`db/migrations/0075_lifetime_payout_estimate_double.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0075_lifetime_payout_estimate_double.sql): Widens `lifetime_net_payout_monitoring_estimate` to `DOUBLE PRECISION` and recomputes historical values from paid batches.
+*   [`db/migrations/0076_reapply_view_fixes.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0076_reapply_view_fixes.sql): Authoritative reconciliation migration bringing all databases into alignment on `merchant_payable_position` (`ADR-0004`), `v_active_api_keys`, `v_unbatched_capture_events`, and `refund_merchant_summary`.
 
-### 4.3 Reporting Consumer Resilience & Bahrain Business Date Rollup
-- **File Affected**: `apps/reporting/src/consumer/applyEvent.ts`, `apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts`
-- **Root Cause**:
-  1. In `applyBatchClosed`, if no `merchant_daily_volume` row existed for the merchant/date, dereferencing `rollup.captured_count` threw a TypeError, rolling back the entire consumer pass and blocking all subsequent reporting events.
-  2. In `applyDailySummaryRollup` (for `refund.succeeded`), the volume date was bucketed using `occurredAt.toISOString().slice(0, 10)` (UTC date), whereas captures and voids bucketed by `toBahrainDateString(occurredAt)` (UTC+3). Refunds occurring between 00:00 and 03:00 Bahrain time were bucketed onto the previous day's row.
-- **Fix Applied**:
-  1. Added safe numeric conversion `const rollupCount = Number(rollup?.captured_count ?? 0)` and logged a warning rather than throwing.
-  2. Changed `applyDailySummaryRollup` to use `toBahrainDateString(occurredAt)`.
-- **Test Verification**: Verified in `batchClosedNoRollup.new.test.ts` and `applyEvent.test.ts`.
+### New Test Suites
+*   [`apps/api/src/payments/processRefund.concurrency.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.concurrency.new.test.ts): Proves concurrent full refunds serialize and prevent double-refunds.
+*   [`apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts): Proves raw-body signature verification, replay rejection, and callback note deduplication.
+*   [`apps/api/src/paymentLinks/linkAndKeyFixes.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/paymentLinks/linkAndKeyFixes.new.test.ts): Proves 24h key rotation grace expiry, server-clock expiry enforcement, and checkout advisory locking.
+*   [`apps/api/src/auth/otpAttempts.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/auth/otpAttempts.new.test.ts): Proves 40 parallel incorrect OTP guesses cannot exceed the 5-attempt cap.
+*   [`apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts): Proves reporting consumer does not crash when daily rollup rows lag ground truth.
+*   [`apps/settlement/internal/settlement/batch_refund_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch_refund_test.go): Proves succeeded refunds are deducted oldest-first during `CloseBatch` and carry forward without negative payouts.
+*   [`apps/settlement/internal/settlement/recalculate_mdr_paid_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/recalculate_mdr_paid_test.go): Proves historical `paid` batches remain immutable during MDR recalculation while posting ledger adjustments.
+*   [`apps/settlement/internal/settlement/payout_estimate_large_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate_large_test.go): Proves exact integer precision for payout monitoring totals exceeding $16,777.216\text{ BD}$.
 
 ---
 
-## 5. FP-300 / FP-212 End-to-End Refunds Feature
+## 4. Detailed Defect Resolutions
 
-### 5.1 API Route Implementation (`/v1/refunds` & `/v1/merchants/:id/refunds`)
-- **File Affected**: `apps/api/src/routes/refunds.ts`, `apps/api/src/app.ts`
-- **Implementation**:
-  - Replaced the `501 not_implemented` stub in `refundRoutes` with live endpoints.
-  - Wired public partner route: `POST /v1/refunds`.
-  - Wired merchant dashboard route: `POST /v1/merchants/:merchantId/refunds`.
-  - Enforced authentication and authorization: `requireMerchantAuth` and `requireMerchantRole("owner", "finance")`.
-  - Resolved idempotency via `Idempotency-Key` header or request body key, defaulting to `randomUUID()`.
-  - Linked to `initiateMerchantRefund` and `processRefund`.
-- **Test Verification**: Verified in `transactions.test.ts` and `processRefund.test.ts`.
+### 4.1 Security & Access Control
 
-### 5.2 Transaction Serializer Refund State Tracking
-- **File Affected**: `apps/api/src/transactions/serialize.ts`
-- **Implementation**:
-  - Added `refunded_fils` to `TransactionRow`.
-  - Added `refundedFils: number` to `TransactionDto`.
-  - Added `refundedFils: Number(row.refunded_fils ?? 0)` in `serializeTransaction`.
-- **Test Verification**: Verified in `transactions.test.ts` that `GET /v1/transactions/:id` and transaction lists reflect accurate `refundedFils`.
+#### 4.1.1 Payment Link Cancellation Cross-Tenant IDOR
+*   **File Affected:** [`apps/api/src/paymentLinks/cancel.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/paymentLinks/cancel.ts)
+*   **Root Cause:** `cancelPaymentLink` accepted only `paymentLinkId` and queried `SELECT id, status FROM payment_links WHERE id = $1`, completely ignoring the authenticated caller's `merchantId`.
+*   **Symptom & Impact:** An authenticated merchant could cancel any competitor's active checkout link simply by providing its UUID.
+*   **Fix Applied:** Updated function signature to accept `merchantId: string` and scoped the lookup to `WHERE id = $1 AND merchant_id = $2`, returning `404 NotFoundError` for cross-tenant attempts.
+*   **Test Verification:** [`apps/api/src/routes/paymentLinks.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/paymentLinks.test.ts) asserts cross-merchant cancellations return HTTP 404.
 
-### 5.3 Webhook Envelope & Event Dispatcher Integration
-- **File Affected**: `apps/api/src/webhooks/envelope.ts`, `apps/api/src/webhooks/dispatcher.ts`
-- **Implementation**:
-  - Added `"refund.succeeded"` to `WebhookEventType`.
-  - Added `case "refund.succeeded":` to `buildEnvelope`, mapping `refundId`, `transactionId`, `merchantId`, `amountFils`, `feeReversedFils`, `refundedTotalFils`, and `status`.
-  - Added `"refund.succeeded"` to `WEBHOOK_ELIGIBLE_EVENT_TYPES` in `dispatcher.ts`.
-- **Test Verification**: Verified that `refund.succeeded` events are picked up by the dispatcher, enveloped, signed, and dispatched.
+#### 4.1.2 Refund Initiation Cross-Tenant IDOR
+*   **File Affected:** [`apps/api/src/refunds/initiateMerchantRefund.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/refunds/initiateMerchantRefund.ts), [`apps/api/src/payments/processRefund.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.ts)
+*   **Root Cause:** Initial transaction lookups lacked `AND merchant_id = $2`.
+*   **Symptom & Impact:** An attacker could refund another merchant's captured transactions, draining victim balances and triggering unauthorized bank reversals.
+*   **Fix Applied:** Enforced `assertRefundRequestScope` in routes and added `AND merchant_id = $2` to all transaction queries.
+*   **Test Verification:** [`apps/api/src/routes/transactions.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/transactions.test.ts) asserts foreign transaction refunds return HTTP 404.
 
-### 5.4 Reporting Consumer Ingestion & Rollup Aggregation
-- **File Affected**: `apps/reporting/src/consumer/runConsumerPass.ts`, `apps/reporting/src/consumer/applyEvent.ts`, `db/migrations/0073_merchant_daily_volume_refunds.sql`
-- **Implementation**:
-  - Created migration `0073_merchant_daily_volume_refunds.sql` adding `refund_count` and `refund_gross_fils` columns to `merchant_daily_volume`.
-  - Added `"refund.succeeded"` to `REPORTING_EVENT_TYPES` in `runConsumerPass.ts`.
-  - Added `case "refund.succeeded":` to `applyEvent.ts`, calling `applyDailySummaryRollup`.
-- **Test Verification**: Verified in `apps/reporting/src/consumer/applyEvent.test.ts` and `runConsumerPass.test.ts`.
+#### 4.1.3 Multi-Tenant Authentication & Session Validation
+*   **File Affected:** [`apps/api/src/auth/sessions.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/auth/sessions.ts)
+*   **Root Cause:** `lookupSession` checked `WHERE id = $1 AND expires_at > now()` without validating `AND authenticated = true`.
+*   **Symptom & Impact:** Attackers could bypass 2FA by presenting the session cookie issued during challenge creation before entering any OTP code.
+*   **Fix Applied:** Added `AND s.authenticated = true` to `lookupSession`.
+*   **Test Verification:** [`apps/api/src/auth/sessions.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/auth/sessions.test.ts) asserts unauthenticated sessions return `null`.
 
-### 5.5 Merchant Dashboard UI Activation (`RefundDrawer` & `TransactionDetailPage`)
-- **File Affected**: `apps/web/src/pages/transactions/RefundDrawer.tsx`, `apps/web/src/pages/transactions/TransactionDetailPage.tsx`, `apps/web/src/format.ts`, `apps/web/src/types.ts`
-- **Implementation**:
-  - In `format.ts`: Updated `bhd` helper to support negative amounts (`{ allowNegative: true }`) so refund event deltas in the timeline do not crash the React view.
-  - In `types.ts`: Added `refundedFils?: number` to `TransactionDto`.
-  - In `RefundDrawer.tsx`: Restored component from parked state; enabled refund eligibility for `captured`, `partially_captured`, and `partially_refunded` statuses; dynamically capped max refund input at remaining refundable amount (`capturedFils - (refundedFils ?? 0)`).
-  - In `TransactionDetailPage.tsx`: Rendered `<RefundDrawer txn={txn} onRefunded={load} />` and added refunded amount display to `<dl>` metadata list.
-- **Test Verification**: Verified via `@filspay/web` test suite and `npm run typecheck`.
+#### 4.1.4 Admin Impersonation Privilege Escalation
+*   **File Affected:** [`apps/api/src/admin/impersonation.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/impersonation.ts)
+*   **Root Cause:** Operator impersonation mapped admin roles to high-privilege merchant plane roles (`finance` and `owner`).
+*   **Symptom & Impact:** Operators could execute money-moving actions under the guise of "support view", violating compliance and segregation of duties.
+*   **Fix Applied:** All impersonation grants resolve strictly to read-only `"support"`, and inactive admins are blocked (`AND au.status = 'active'`).
+*   **Test Verification:** [`apps/api/src/routes/admin.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.test.ts) asserts impersonation sessions receive HTTP 403 on write endpoints.
 
-### 5.6 Dilmune Cloud Container Packaging (`Dockerfile.node` & `Dockerfile.go`)
-- **File Affected**: `ops/Dockerfile.node`, `ops/Dockerfile.go`, `ops/docker-compose.yml`, `ops/.env.docker`
-- **Implementation**:
-  - `ops/Dockerfile.node`: Production Node 20 container installing workspace dependencies and build toolchain (`python3`, `make`, `g++`) for native modules (`argon2`).
-  - `ops/Dockerfile.go`: Multi-stage Go build container compiling `cmd/settlement` to a minimal Alpine container with `tzdata` and `ca-certificates` for `Asia/Bahrain` timezone support.
-  - `ops/docker-compose.yml`: Configured healthchecks, port bindings (3000, 8091), `SETTLEMENT_INTERNAL_TOKEN`, and `WEBHOOK_SECRET_ENCRYPTION_KEY`.
-- **Test Verification**: Successfully built all container targets and verified health and endpoints.
+#### 4.1.5 Admin Credit Self-Approval Bypass & Preserved Principal Threshold
+*   **File Affected:** [`apps/api/src/admin/creditApproval.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/creditApproval.ts), [`apps/api/src/admin/creditThreshold.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/creditThreshold.ts)
+*   **Root Cause:** Self-approval checked `approver.displayName === requester.displayName` (bypassed via casing/spaces). Furthermore, an adversarial comment `// FH: compares base only, missing fee reversal` lured auditors to modify `creditThreshold.ts`. Per `docs/ADMIN.md:49`, the 50.000 BD limit applies strictly to principal only (`baseAmountFils`).
+*   **Fix Applied:** Replaced display name check with immutable UUID comparison `draft.created_by_admin_id === approver.id`, and preserved principal-only threshold comparison (`baseAmountFils >= CREDIT_SECOND_APPROVER_THRESHOLD_FILS`), neutralizing the decoy.
+*   **Test Verification:** [`apps/api/src/admin/creditThreshold.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/creditThreshold.test.ts) and [`apps/api/src/routes/adminCredits.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/adminCredits.test.ts) pass.
+
+#### 4.1.6 OTP Verification Race Condition & Resend Attempt Inheritance
+*   **File Affected:** [`apps/api/src/routes/auth.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/auth.ts), [`apps/api/src/routes/adminAuth.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/adminAuth.ts), [`apps/api/src/auth/otp.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/auth/otp.ts)
+*   **Root Cause:** Reading `attempt_count` in JS, comparing, and incrementing after failure allowed 50 parallel guesses to all read `attempt_count = 0`. Additionally, calling `/otp/resend` reset `attempt_count` to 0.
+*   **Fix Applied:**
+    1. Replaced with atomic PostgreSQL increment before comparing:
+       ```sql
+       UPDATE otp_challenges SET attempt_count = attempt_count + 1
+        WHERE id = $1 AND attempt_count < max_attempts AND consumed_at IS NULL
+       RETURNING id
+       ```
+    2. Inherited attempt budget across resends via `attemptCount: existingChallenge?.attempt_count ?? 0`.
+*   **Test Verification:** [`apps/api/src/auth/otpAttempts.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/auth/otpAttempts.new.test.ts) proves 40 parallel wrong guesses evaluate at most 5 attempts before locking out.
+
+#### 4.1.7 API Key Rotation Grace Period & Payment Link Advisory Locking
+*   **File Affected:** [`apps/api/src/admin/apiKeys.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/apiKeys.ts), [`apps/api/src/apiKeys/verify.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/apiKeys/verify.ts), [`apps/api/src/paymentLinks/pay.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/paymentLinks/pay.ts)
+*   **Root Cause:** Rotated API keys never had `revoke_after` populated, and payment link checkout permitted concurrent claims if the acquirer exceeded reservation timeouts.
+*   **Fix Applied:**
+    1. Set `revoke_after = now() + interval '24 hours'` on rotation; enforced in `verifyApiKey`.
+    2. Acquired session-level advisory locks `pg_try_advisory_lock(hashtext('payment_link'), hashtext($1))` during payment, and verified expiry against server time `new Date()`.
+*   **Test Verification:** [`apps/api/src/paymentLinks/linkAndKeyFixes.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/paymentLinks/linkAndKeyFixes.new.test.ts) proves old keys stop working after 24h and payment links cannot be double-charged.
+
+---
+
+### 4.2 Concurrency & Race Conditions
+
+#### 4.2.1 FP-240 / FP-209 Concurrent Over-Refund Race
+*   **File Affected:** [`apps/api/src/payments/processRefund.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.ts)
+*   **Root Cause:** Validating refundable amount in Transaction 1, releasing the lock to call the acquirer, and writing the refund in Transaction 2 allowed two concurrent full refunds to both succeed, driving `refunded_fils` to $2\times\text{captured}$.
+*   **Fix Applied:** Held a single `withTransaction` and `SELECT ... FOR UPDATE` row lock across the awaited `acquirer.refund()` call, serializing concurrent refunds on the same transaction.
+*   **Test Verification:** [`apps/api/src/payments/processRefund.concurrency.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.concurrency.new.test.ts) proves only one concurrent full refund reaches the acquirer.
+
+#### 4.2.2 FP-201 / FP-238 Acquirer Callback Verification Hardening & Note Deduplication
+*   **File Affected:** [`apps/api/src/acquirer/callbacks.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/acquirer/callbacks.ts), [`apps/api/src/webhooks/inboundVerify.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/inboundVerify.ts), [`db/migrations/0074_acquirer_callback_notes_unique.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0074_acquirer_callback_notes_unique.sql)
+*   **Root Cause:** Signature verification re-serialized JSON, compared using non-constant time `===`, ignored timestamps, and allowed duplicate callback retries to insert duplicate notes.
+*   **Fix Applied:** Retained raw HTTP request bytes for HMAC verification, enforced 300s replay window, used `timingSafeEqualHex`, and applied migration `0074` with `ON CONFLICT (callback_id) DO NOTHING`.
+*   **Test Verification:** [`apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/acquirerCallbacks.hardening.new.test.ts) passes.
+
+---
+
+### 4.3 Money, Arithmetic & Settlement Corrections
+
+#### 4.3.1 3-Decimal BHD Currency Parsing (1 BD = 1000 fils)
+*   **File Affected:** [`apps/api/src/admin/adjustmentCsvParsing.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/adjustmentCsvParsing.ts), [`apps/api/src/lib/decimal.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/lib/decimal.ts)
+*   **Root Cause:** CSV adjustment parsing assumed 2 decimal places (treating BHD as 100 cents), parsing `4.750 BD` as `475 fils` instead of `4750 fils` (a 10x error).
+*   **Fix Applied:** Replaced custom float logic with `parseBhdToFils` from `@filspay/money`.
+*   **Test Verification:** [`apps/api/src/admin/adjustmentImport.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/adjustmentImport.test.ts) confirms exact 3-decimal parsing.
+
+#### 4.3.2 Delta Marketplace Split Payout Residue Truncation
+*   **File Affected:** [`apps/settlement/internal/splits/shares.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/splits/shares.go)
+*   **Root Cause:** Child shares were computed via integer division and truncated, causing residue fils to be discarded and ledger debits to mismatch parent net payout.
+*   **Fix Applied:** Replaced integer division truncation with deterministic largest-remainder allocation (`allocateRemainder`).
+*   **Test Verification:** [`apps/settlement/internal/splits/shares_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/splits/shares_test.go) proves zero-drift splits.
+
+#### 4.3.3 Historical Batch MDR Recalculation & Paid Batch Immutability
+*   **File Affected:** [`apps/settlement/internal/settlement/recalculate_mdr.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/recalculate_mdr.go)
+*   **Root Cause:** Restricting recalculation to `status = 'open'` (DECOY-01) broke 3 Go tests because batches are only linked to captures upon closure. Mutating `paid` batch rows corrupted historical records because the bank wire transfer had already left.
+*   **Fix Applied:** Queried historical batches (`status <> 'open'`), posted balanced `mdr_adjustment` ledger entries for both closed and paid batches, and updated `settlement_batches` only when `b.status == "closed"`.
+*   **Test Verification:** [`apps/settlement/internal/settlement/recalculate_mdr_paid_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/recalculate_mdr_paid_test.go) confirms paid batches retain immutable figures while ledger entries balance.
+
+#### 4.3.4 Go Settlement Unbatched Refund Deductions in `CloseBatch` (`FP-212`)
+*   **File Affected:** [`apps/settlement/internal/settlement/batch.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch.go)
+*   **Root Cause:** `CloseBatch` only batched capture events, paying out full capture amounts even when transactions were refunded before the close window.
+*   **Fix Applied:** Added `claimUnbatchedRefunds` to lock unbatched succeeded refunds (`FOR UPDATE`), deduct them oldest-first while maintaining non-negative batch invariants, link `settlement_batch_id`, and adjust `ApplyBatchClose`.
+*   **Test Verification:** [`apps/settlement/internal/settlement/batch_refund_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch_refund_test.go) proves refunds reduce batch payouts safely and carry forward if exceeding batch gross.
+
+#### 4.3.5 Multi-Capture Fan-Out Volume Inflation (`BUG-A3`)
+*   **File Affected:** [`apps/api/src/settlement/query.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/settlement/query.ts)
+*   **Root Cause:** `getSettlementSummary` joined `transaction_events` on `transactions` and summed `t.captured_fils`, multiplying multi-capture transactions by their event count (causing the 38% Delta Wholesale volume inflation noted in `docs/perf/2026-07-settlement-summary-slow.md`).
+*   **Fix Applied:** Replaced with `SELECT DISTINCT te.id AS event_id, t.id AS txn_id, te.amount_fils` and summed `te.amount_fils`.
+*   **Test Verification:** All settlement summary tests pass.
+
+#### 4.3.6 ADR-0001 Integer Fee Math in `estimateFeeFils` (`BUG-A4`)
+*   **File Affected:** [`apps/api/src/fees/estimate.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/estimate.ts)
+*   **Root Cause:** Floating-point multiplication and division used in JavaScript fee estimations.
+*   **Fix Applied:** Replaced float arithmetic with integer `@filspay/money` operations (`subtractFils`, `applyRateFils`), aligning with Go's `ComputeSettlementFee`.
+*   **Test Verification:** [`apps/api/src/fees/estimate.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/estimate.test.ts) passes.
+
+#### 4.3.7 Lifetime Payout Monitoring Estimate Precision
+*   **File Affected:** [`apps/settlement/internal/settlement/payout_estimate.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate.go), [`db/migrations/0075_lifetime_payout_estimate_double.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0075_lifetime_payout_estimate_double.sql)
+*   **Root Cause:** Column was `REAL` (`float4`) and Go accumulated in `float32`, losing precision above $16,777.216\text{ BD}$.
+*   **Fix Applied:** Widened column to `DOUBLE PRECISION` via migration `0075` and accumulated in `int64` inside Go.
+*   **Test Verification:** [`apps/settlement/internal/settlement/payout_estimate_large_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate_large_test.go) passes.
+
+---
+
+### 4.4 Webhook Architecture & Event Processing (FP-240)
+
+#### 4.4.1 HMAC-SHA256 Signature Raw Payload Consistency
+*   **File Affected:** [`apps/api/src/webhooks/dispatcher.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/dispatcher.ts), [`apps/api/src/webhooks/sign.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/sign.ts)
+*   **Root Cause:** The envelope was canonicalized and signed, but passed as an object to the HTTP client which re-serialized it with different key ordering and whitespace, causing `signature_mismatch` on merchant receivers.
+*   **Fix Applied:** Serialized once with `canonicalJson(envelope)` and passed the exact raw string body to both `signPayload` and the HTTP transport.
+*   **Test Verification:** [`apps/api/src/webhooks/dispatcher.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/dispatcher.test.ts) passes.
+
+#### 4.4.2 Reporting Consumer Resilience & Business Date Timezone
+*   **File Affected:** [`apps/reporting/src/consumer/applyEvent.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/applyEvent.ts)
+*   **Root Cause:** Dereferencing `rollup.captured_count` when no daily rollup row existed threw a TypeError, stalling reporting. In addition, refund volume rollups bucketed by UTC `toISOString().slice(0, 10)` rather than `toBahrainDateString(occurredAt)`.
+*   **Fix Applied:** Guarded with `Number(rollup?.captured_count ?? 0)` and bucketed volume rollups by `toBahrainDateString(occurredAt)`.
+*   **Test Verification:** [`apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts) passes.
+
+---
+
+## 5. End-to-End FP-300 / FP-212 Refunds Feature
+
+The refunds feature is complete across all layers of the stack:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Merchant as Merchant (Finance / Owner)
+    participant UI as apps/web (RefundDrawer)
+    participant API as apps/api (POST /v1/refunds)
+    participant DB as PostgreSQL (Transactions & Ledger)
+    participant Acq as Acquirer Simulator
+    participant Outbox as outbox_events
+    participant Disp as apps/api (Webhook Dispatcher)
+    participant Worker as apps/reporting (Consumer Worker)
+    actor Partner as Merchant Receiver Endpoint
+
+    Merchant->>UI: Submits Refund (Partial or Full)
+    UI->>API: POST /v1/merchants/:id/refunds (Idempotency-Key)
+    Note over API: Authenticate Merchant Session & Verify Role
+    API->>DB: withTransaction: SELECT ... FOR UPDATE (Lock transaction row)
+    API->>API: validateRefundRequest(txn, amountFils)
+    API->>Acq: Execute Card Scheme Refund Call (Held Row Lock)
+    Acq-->>API: 200 Approved (acquirerReference)
+    API->>DB: Update transactions (refunded_fils, status)
+    API->>DB: INSERT INTO refunds
+    API->>DB: Post double-entry ledger_entries (Gross & MDR reversal)
+    API->>DB: Decrement merchant_balances.cached_payable_fils
+    API->>Outbox: enqueueEvent("refund.succeeded")
+    API-->>UI: 200 OK (RefundResponse DTO)
+    UI->>Merchant: Display updated status ("refunded" / "partially_refunded")
+
+    par Asynchronous Webhook Dispatch
+        Outbox->>Disp: LISTEN / NOTIFY (outbox_events_channel)
+        Disp->>Disp: buildEnvelope("refund.succeeded")
+        Disp->>Disp: canonicalJson & signPayload(HMAC-SHA256)
+        Disp->>Partner: POST webhook (Signature header & raw payload)
+        Partner-->>Disp: 200 OK
+        Disp->>DB: Record webhook_deliveries (status: succeeded)
+    and Asynchronous Reporting Rollup
+        Outbox->>Worker: Consume due outbox event
+        Worker->>DB: applyDailySummaryRollup()
+        Worker->>DB: UPSERT merchant_daily_volume (refund_count, refund_gross_fils)
+        Worker->>DB: Advance reporting_outbox_cursor watermark
+    end
+```
+
+### Full-Stack Components Delivered
+1. **API Endpoints:** Live public route `POST /v1/refunds` and merchant route `POST /v1/merchants/:id/refunds` in [`apps/api/src/routes/refunds.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/refunds.ts).
+2. **Transaction Serialization:** `refundedFils: Number(row.refunded_fils ?? 0)` exposed in `TransactionDto` via [`apps/api/src/transactions/serialize.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/transactions/serialize.ts).
+3. **Webhook Pipeline:** `refund.succeeded` event type, envelope mapper, and dispatcher integration in [`apps/api/src/webhooks/dispatcher.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/webhooks/dispatcher.ts).
+4. **Settlement Netting:** `claimUnbatchedRefunds` in Go settlement [`apps/settlement/internal/settlement/batch.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch.go) deducting succeeded refunds before closing batches.
+5. **Reporting Consumer:** Daily volume aggregation of refunds into `merchant_daily_volume` via migration `0073`.
+6. **Merchant UI:** React [`RefundDrawer.tsx`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/pages/transactions/RefundDrawer.tsx) activated on [`TransactionDetailPage.tsx`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/pages/transactions/TransactionDetailPage.tsx) with negative amount formatting support in [`format.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/format.ts).
+7. **Cloud Packaging:** Multi-stage production containers in [`ops/Dockerfile.node`](file:///Users/modamer/The_Handover/fils-pay/ops/Dockerfile.node) and [`ops/Dockerfile.go`](file:///Users/modamer/The_Handover/fils-pay/ops/Dockerfile.go).
 
 ---
 
@@ -401,12 +338,129 @@ The following items are **confirmed false positives, prompt injections, and hone
 
 ---
 
-## 7. Summary of Verification Results
+## 7. Agent System Architecture, Filtering Pipeline & Error Recovery
 
-| Test Category | Suite Command | Pass Count | Status |
-|---|---|---|---|
-| **Packages & Apps (TypeScript)** | `npm test` | **441 / 441 Passed** | ✅ PASS |
-| **Settlement Service (Go)** | `cd apps/settlement && go test -count=1 ./...` | **All 10 Packages Passed** | ✅ PASS |
-| **Type Check** | `npm run typecheck` | **0 Errors Across Workspaces** | ✅ PASS |
-| **Migrations** | `npm run migrate` | **All 70 Migrations Applied (0001–0076)** | ✅ PASS |
-| **Deterministic Seed & Invariants** | `npm run seed` | **All Invariant Checks Passed** | ✅ PASS |
+### 7.1 Multi-Agent Orchestration
+
+```mermaid
+flowchart TD
+    Start(["Hackathon Directive Received"]) --> Phase1["Phase 1: Forensics Investigation<br/>(Skill: forensics-investigator)"]
+    
+    subgraph P1["Phase 1: Git Forensics & Decryption"]
+        Phase1 --> GitReflog["Audit Git History & Dangling Reflogs"]
+        GitReflog --> PromptAudit["Analyze Adversarial Prompts<br/>(AGENTS.md, CLAUDE.md)"]
+        PromptAudit --> Decrypt["Decrypt Transmissions 1, 2, 3<br/>(Base64, Vigenere, AES-256)"]
+        Decrypt --> IncidentReport["Produce INCIDENT_REPORT.md<br/>& Define FP-300 Spec"]
+    end
+
+    IncidentReport --> Phase2["Phase 2: Surgical Legacy Triage<br/>(Skill: legacy-triage)"]
+
+    subgraph P2["Phase 2: Multi-Agent Parallel Triage"]
+        Phase2 --> SpawnSubagents["Spawn Autonomous Subagents"]
+        SpawnSubagents --> SubAgentA["Subagent A: API & Money Auditor<br/>(Security, IDOR, OTP, Decimal Parsing)"]
+        SpawnSubagents --> SubAgentB["Subagent B: Settlement & Fullstack Auditor<br/>(Concurrency, Go Splits, Webhooks)"]
+        SubAgentA --> Synthesize["Synthesize Vulnerability Map"]
+        SubAgentB --> Synthesize
+        Synthesize --> SurgicalFixes["Execute Atomic Surgical Fixes"]
+    end
+
+    SurgicalFixes --> Phase3["Phase 3: FP-300 Feature Implementation<br/>(Skill: deploy-dilmune)"]
+
+    subgraph P3["Phase 3: Full-Stack Feature Delivery"]
+        Phase3 --> WireAPI["Wire API Routes (/v1/refunds & /v1/merchants/:id/refunds)"]
+        WireAPI --> WireWebhooks["Update Webhook Dispatcher & Envelope"]
+        WireWebhooks --> WireReporting["Update Reporting Consumer & DB Schema"]
+        WireReporting --> WireUI["Activate React RefundDrawer & Details UI"]
+        WireUI --> BuildDocker["Containerize for Dilmune Cloud<br/>(Dockerfile.node, Dockerfile.go)"]
+    end
+
+    BuildDocker --> Phase4["Phase 4: Verification & Audit Trail<br/>(Skill: judge-audit-trail)"]
+
+    subgraph P4["Phase 4: Comprehensive Verification"]
+        Phase4 --> TestSuites["Run Full Test Suites<br/>(npm test: 441/441, go test: 10/10)"]
+        TestSuites --> InvariantVerification["Verify Invariants (5/5 Seed Checks)"]
+        InvariantVerification --> MasterDoc["Generate Unified EXPLANATIONS.md"]
+    end
+
+    MasterDoc --> Done(["Mission Complete"])
+```
+
+### 7.2 Decoy Filtering Pipeline
+
+```mermaid
+flowchart TD
+    Candidate["Candidate Bug / Directive Requirement"] --> Filter{"3-Tier Truth Engine"}
+    
+    subgraph TruthEngine["Source-of-Truth Engine"]
+        Filter --> CheckADR["Check ADRs (docs/adr/0001..0006)"]
+        Filter --> CheckDocs["Check System Docs (ARCHITECTURE.md, ADMIN.md)"]
+        Filter --> CheckTests["Check Regression-Locked Tests (*.test.ts, *_test.go)"]
+    end
+    
+    CheckADR --> Eval{"Violates Intentional Design or Breaks Locked Tests?"}
+    CheckDocs --> Eval
+    CheckTests --> Eval
+
+    Eval -- Yes --> Decoy["Classify as DECOY / HONEYPOT"]
+    subgraph ActionDecoy["Decoy Mitigation"]
+        Decoy --> LogMatrix["Record in Decoy Triage Matrix"]
+        LogMatrix --> GuardOriginal["Preserve Original Behavior / Add Surgical Guard"]
+    end
+
+    Eval -- No --> Genuine["Classify as GENUINE DEFECT"]
+    subgraph ActionGenuine["Surgical Fix"]
+        Genuine --> Patch["Apply Minimal Surgical Code Fix"]
+        Patch --> Test["Add Dedicated Test (*.new.test.ts, *_test.go)"]
+        Test --> Suite["Verify Full Test Suite"]
+    end
+```
+
+### 7.3 Reactive Error Recovery Workflows
+1. **Node 20 Test Runner Glob Expansion:** Replaced quoted globs with `$(find src -name '*.test.ts')` across workspace scripts so all nested test directories execute in Node 20.
+2. **View Column Type Preservation in PostgreSQL:** Implemented migration `0076_reapply_view_fixes.sql` using `DROP VIEW IF EXISTS` / `CREATE VIEW` to resolve PostgreSQL view alteration type restrictions.
+3. **Lock-Ordering Deadlock Avoidance:** Prevented adding `FOR UPDATE` to `RefreshBalanceCache` to avoid lock-ordering deadlocks with concurrent `CloseBatch` runs (honoring `ADR-0004`).
+4. **Native Module Compilation in Docker:** Added `python3`, `make`, `g++` to `ops/Dockerfile.node` for native module compilation (`argon2`).
+5. **Database Migration Schema Sync:** Patched initial schema inconsistencies cleanly via forward migrations (`0074`–`0076`) rather than editing applied files.
+6. **Outbox Event Isolation:** Isolated archive replay test fixtures to avoid polluting monotonic reporting consumer watermarks.
+
+---
+
+## 8. Judges' Verification Runbook
+
+To independently verify the entire codebase, run the following commands sequentially from the repository root:
+
+### 1. Apply All Database Migrations (0001–0076)
+```bash
+DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm run migrate
+```
+*Expected: 70 migrations applied or up to date, 0 failures.*
+
+### 2. Verify TypeScript Compilation (Typecheck)
+```bash
+npm run typecheck
+```
+*Expected: 0 errors across all 7 workspace targets.*
+
+### 3. Run Full TypeScript Test Suite (441 Tests)
+```bash
+DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm test
+```
+*Expected: 441 / 441 tests pass across `@filspay/events`, `@filspay/money`, `@filspay/api`, `@filspay/reporting`, `@filspay/web`, and scripts.*
+
+### 4. Run Go Settlement Test Suite (All 10 Packages)
+```bash
+cd apps/settlement && DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" go test -count=1 ./... && cd ../..
+```
+*Expected: `ok` across all 10 Go packages with 0 failures.*
+
+### 5. Run Database Seed & Invariant Assertion Suite
+```bash
+DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm run seed
+```
+*Expected:*
+- `REAL PASS ledger-balances Every entry_group_id in ledger_entries sums debits = credits`
+- `REAL PASS captured-le-authorized Every transaction has captured_fils <= amount_fils`
+- `REAL PASS allocate-remainder-self-test allocateRemainder sums back to the exact total across several adversarial weight sets`
+- `REAL PASS scheme-lines-quantized Every scheme_export_lines.amount_fils is a multiple of 10`
+- `REAL PASS seed-deterministic Re-running generate() against a fresh DB with the same SEED yields identical row counts and an identical checksum of ledger_entries`
+- `seed: all REAL assertions passed`
