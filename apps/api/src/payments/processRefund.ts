@@ -36,7 +36,14 @@ interface RefundTransactionRow {
   acquirer_reference: string;
 }
 
-/** Refund business logic: validate, call the acquirer, then journal the reversal. */
+/**
+ * Refund business logic: validate, call the acquirer, then journal the
+ * reversal — in ONE transaction, with the `FOR UPDATE` lock on the
+ * transaction row held across the awaited acquirer call, exactly as
+ * captureTransaction does. Releasing the lock between validation and the
+ * acquirer call (FP-240) let two concurrent refunds both validate against
+ * the same refunded_fils and both move money out.
+ */
 export async function processRefund(
   pool: Pool,
   acquirer: AcquirerSimulator,
@@ -48,8 +55,8 @@ export async function processRefund(
     reason: input.reason ?? null,
   });
 
-  // 1 validate
-  const prepared = await withTransaction(pool, async (client) => {
+  return withTransaction(pool, async (client) => {
+    // 1 validate
     const claim = await claimIdempotencyKey(client, {
       merchantId: input.merchantId,
       endpoint: ENDPOINT,
@@ -64,10 +71,7 @@ export async function processRefund(
       throw new ConflictError("request_in_progress");
     }
     if (claim.outcome === "replay") {
-      return {
-        kind: "settled" as const,
-        result: { statusCode: claim.row.responseStatusCode ?? 200, body: claim.row.responseBody },
-      };
+      return { statusCode: claim.row.responseStatusCode ?? 200, body: claim.row.responseBody };
     }
 
     const txnResult = await client.query<RefundTransactionRow>(
@@ -81,7 +85,7 @@ export async function processRefund(
     if (!txn) {
       const body = { error: "transaction_not_found" };
       await completeIdempotencyKey(client, claim.row.id, { statusCode: 404, body });
-      return { kind: "settled" as const, result: { statusCode: 404, body } };
+      return { statusCode: 404, body };
     }
 
     const amountAuthorized = toFils(Number(txn.amount_fils));
@@ -104,7 +108,7 @@ export async function processRefund(
     if (!validation.ok) {
       const statusCode = validation.code === "transaction_not_refundable" ? 409 : 422;
       await completeIdempotencyKey(client, claim.row.id, { statusCode, body: validation });
-      return { kind: "settled" as const, result: { statusCode, body: validation } };
+      return { statusCode, body: validation };
     }
 
     // The fee this transaction was actually charged at capture, read from
@@ -124,8 +128,7 @@ export async function processRefund(
       throw new Error("processRefund: fee aggregate returned no row");
     }
 
-    return {
-      kind: "proceed" as const,
+    const prepared = {
       claimId: claim.row.id,
       attemptCount: claim.row.attemptCount,
       transactionId: txn.id,
@@ -137,21 +140,15 @@ export async function processRefund(
       feeChargedFils: toFils(Number(feeRow.fee_fils)),
       requestedAmount: validation.amountFils,
     };
-  });
 
-  if (prepared.kind === "settled") {
-    return prepared.result;
-  }
+    // 2 acquirer — awaited with the row lock above still held.
+    const acquirerResult = await acquirer.refund({
+      acquirerReference: prepared.acquirerReference,
+      amountFils: prepared.requestedAmount,
+      idempotencyKey: `${prepared.claimId}:${prepared.attemptCount}`,
+    });
 
-  // 2 acquirer
-  const acquirerResult = await acquirer.refund({
-    acquirerReference: prepared.acquirerReference,
-    amountFils: prepared.requestedAmount,
-    idempotencyKey: `${prepared.claimId}:${prepared.attemptCount}`,
-  });
-
-  // 3 journal
-  return withTransaction(pool, async (client) => {
+    // 3 journal
     if (acquirerResult.outcome === "declined") {
       const body = { error: "refund_declined" };
       await completeIdempotencyKey(client, prepared.claimId, { statusCode: 402, body });
@@ -163,17 +160,10 @@ export async function processRefund(
       return { statusCode: 502, body };
     }
 
-    // Re-lock transaction row to prevent lost updates or concurrent over-refunds
-    const freshTxnResult = await client.query<{ captured_fils: string; refunded_fils: string }>(
-      `SELECT captured_fils, refunded_fils FROM transactions WHERE id = $1 FOR UPDATE`,
-      [prepared.transactionId],
-    );
-    const freshCaptured = toFils(Number(freshTxnResult.rows[0]!.captured_fils));
-    const freshRefunded = toFils(Number(freshTxnResult.rows[0]!.refunded_fils));
-    const newRefundedTotal = addFils(freshRefunded, prepared.requestedAmount);
+    const newRefundedTotal = addFils(prepared.refundedFils, prepared.requestedAmount);
     const newStatus = nextStatusAfterRefund({
       amountFils: prepared.amountAuthorized,
-      capturedFils: freshCaptured,
+      capturedFils: prepared.capturedFils,
       refundedTotalFils: newRefundedTotal,
     });
     const feeReversedFils = calculateRefundFee(

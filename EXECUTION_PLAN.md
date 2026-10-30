@@ -92,7 +92,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 10: Fix Concurrent Refund Double-Refund Race (`FP-240` / `FP-209`)
+### [x] Step 10: Fix Concurrent Refund Double-Refund Race (`FP-240` / `FP-209`)
 - **Why:** In `apps/api/src/payments/processRefund.ts`, the initial implementation validated `refundable = captured_fils - refunded_fils` in Transaction 1, released the row lock to call `acquirer.refund()`, and then wrote the refund in Transaction 2 without re-checking `refunded_fils + amount <= captured_fils`. Two concurrent partial refunds for the full balance both passed validation, both called the acquirer, and drove `refunded_fils` to `2 * captured_fils`. Holding a single `withTransaction` and `SELECT ... FOR UPDATE` lock across `acquirer.refund()` (matching `capture.ts`) serializes concurrent refunds on the same transaction row.
 - **Action:**
   ```bash
