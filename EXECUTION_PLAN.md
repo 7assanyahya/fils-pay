@@ -444,7 +444,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/api -- src/fees/estimate.test.ts src/settlement/
    ```
 
-### [ ] Step 5: Fix OTP Resend Attempt Budget Reset (`BUG-A5`)
+### [x] Step 5: Fix OTP Resend Attempt Budget Reset (`BUG-A5`)
 1. Edit `apps/api/src/routes/auth.ts` (lines 234–259) in `POST /v1/auth/otp/resend`:
    - Select `id, created_at, attempt_count` from `otp_challenges`.
    - Pass `prev.attempt_count` into `INSERT INTO otp_challenges (id, merchant_user_id, code_hash, expires_at, attempt_count) VALUES ($1, $2, $3, $4, $5)`.
