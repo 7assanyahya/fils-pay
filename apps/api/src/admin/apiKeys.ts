@@ -22,8 +22,13 @@ export async function rotateApiKeyAsAdmin(
   input: { merchantId: string; apiKeyId: string; adminUserId: string; label?: string },
 ): Promise<RotatedApiKey> {
   return withTransaction(pool, async (client) => {
-    const existing = await client.query<{ id: string; label: string | null; revoked_at: Date | null }>(
-      `SELECT id, label, revoked_at FROM api_keys WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
+    const existing = await client.query<{
+      id: string;
+      label: string | null;
+      revoked_at: Date | null;
+      revoke_after: Date | null;
+    }>(
+      `SELECT id, label, revoked_at, revoke_after FROM api_keys WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
       [input.apiKeyId, input.merchantId],
     );
     const row = existing.rows[0];
@@ -32,6 +37,11 @@ export async function rotateApiKeyAsAdmin(
     }
     if (row.revoked_at) {
       throw new ConflictError("api_key_already_revoked");
+    }
+    // Already rotated: its revocation is scheduled (or past). Rotating it
+    // again would push revoke_after out and bring an expired key back.
+    if (row.revoke_after) {
+      throw new ConflictError("api_key_already_rotated");
     }
 
     const issued = await issueApiKeyInTx(client, config, {
