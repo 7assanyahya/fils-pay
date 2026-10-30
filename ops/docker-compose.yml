@@ -23,6 +23,7 @@ services:
       POSTGRES_DB: filspay
     ports:
       - "5432:5432"
+    restart: unless-stopped
     volumes:
       - filspay_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -86,6 +87,23 @@ services:
       SETTLEMENT_INTERNAL_URL: http://settlement:8091
       SETTLEMENT_INTERNAL_TOKEN: dev-token
       WEBHOOK_SECRET_ENCRYPTION_KEY: Y1ZTGTcYbe30GZJebys9w7T3OYZNKewuOH3SUCEdRQk=
+      # Capacity (docs/CAPACITY.md): enough connections that checkouts holding
+      # a row lock across the acquirer call don't queue behind each other,
+      # and a cap on in-flight requests past which the api answers 503.
+      PG_POOL_MAX: "10"
+      API_MAX_INFLIGHT: "200"
+    # Recover on its own: restart after a crash or OOM kill, and let the
+    # health check flag a hung process.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    # The judged box limits the api to 0.5 vCPU / 512 MB.
+    cpus: 0.5
+    mem_limit: 512m
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,6 +124,7 @@ services:
       # AM: PGCONN_SETTLEMENT is ignored while DATABASE_URL is set; kept for the
       # settlement-v2 sharding work. safe to leave.
       PGCONN_SETTLEMENT: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,6 +137,7 @@ services:
     command: ["npx", "tsx", "apps/reporting/src/index.ts"]
     environment:
       DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
