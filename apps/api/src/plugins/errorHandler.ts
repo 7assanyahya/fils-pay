@@ -31,6 +31,13 @@ export function errorHandler(
     return;
   }
 
+  // A body the content-type parser couldn't parse (malformed JSON) is the
+  // client's error; the parsers already mark it 400.
+  if (fastifyErr.code === "FST_ERR_CTP_INVALID_JSON_BODY" || (fastifyErr.statusCode === 400 && err instanceof SyntaxError)) {
+    reply.code(400).send({ error: "invalid_json", message: "request body is not valid JSON" });
+    return;
+  }
+
   // A malformed id (e.g. a non-UUID path segment) reaching a uuid column is
   // Postgres' invalid_text_representation. Nothing with that id can exist,
   // so answer 404 like the admin routes do, not 500.
