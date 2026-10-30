@@ -99,6 +99,9 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/settlement/internal/settlement/payout_estimate.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate.go): Accumulated in `int64` and returned `float64` to prevent mantissa rounding drift.
 *   [`apps/reporting/src/consumer/applyEvent.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/applyEvent.ts): Handled missing daily rollup rows gracefully and aligned refund volume rollups to `Asia/Bahrain` dates.
 *   [`apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx): Replaced UI float math with integer operations (`BUG-A8`).
+*   [`apps/settlement/internal/internalapi/server.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/server.go): Added `POST /internal/rebuild-balances-ledger` route calling `ledger.RebuildAllBalances` to route the admin balance rebuild to the authoritative ledger walk while preserving `/internal/rebuild-balances` for locked tests (`DEF-01`).
+*   [`apps/api/src/admin/settlementClient.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClient.ts): Added `triggerLedgerBalanceRebuild` client function targeting `/internal/rebuild-balances-ledger` (`DEF-01`).
+*   [`apps/api/src/routes/admin.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.ts): Routed default `rebuildBalances` action to `triggerLedgerBalanceRebuild` (`DEF-01`).
 *   Workspace [`package.json`](file:///Users/modamer/The_Handover/fils-pay/apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
 
 ### New Database Migrations (`db/migrations/`)
@@ -115,6 +118,8 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/settlement/internal/settlement/batch_refund_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/batch_refund_test.go): Proves succeeded refunds are deducted oldest-first during `CloseBatch` and carry forward without negative payouts.
 *   [`apps/settlement/internal/settlement/recalculate_mdr_paid_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/recalculate_mdr_paid_test.go): Proves historical `paid` batches remain immutable during MDR recalculation while posting ledger adjustments.
 *   [`apps/settlement/internal/settlement/payout_estimate_large_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate_large_test.go): Proves exact integer precision for payout monitoring totals exceeding $16,777.216\text{ BD}$.
+*   [`apps/settlement/internal/internalapi/rebuild_ledger_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/rebuild_ledger_test.go): Proves `/internal/rebuild-balances-ledger` returns the authoritative ledger total (15000 fils) rather than conflicting scheme export line amounts (7000 fils) (`DEF-01`).
+*   [`apps/api/src/admin/settlementClientLedger.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClientLedger.new.test.ts): Proves `triggerLedgerBalanceRebuild` sends requests to `/internal/rebuild-balances-ledger` with bearer authentication (`DEF-01`).
 
 ---
 
@@ -239,6 +244,23 @@ Every item from the three challenge handouts was audited against the codebase:
 *   **Fix Applied:** Widened column to `DOUBLE PRECISION` via migration `0075` and accumulated in `int64` inside Go.
 *   **Test Verification:** [`apps/settlement/internal/settlement/payout_estimate_large_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate_large_test.go) passes.
 
+#### 4.3.8 Admin "Recalculate cached balances" Routed to Ledger Walk (`DEF-01`)
+*   **File Affected:** [`apps/settlement/internal/internalapi/server.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/server.go), [`apps/api/src/admin/settlementClient.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClient.ts), [`apps/api/src/routes/admin.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.ts)
+*   **Root Cause & Why It Happened:** In `apps/api/src/routes/admin.ts:78`, the default handler for the admin console's "Rebuild cached balances" button called `triggerBalanceRebuild`, which targeted `POST /internal/rebuild-balances`. That endpoint in `apps/settlement/internal/internalapi/server.go:268` invoked `ledger.RefreshBalanceCache`, which queried the `merchant_payable_position` database view. This view computes balances by summing `scheme_export_lines.amount_fils` (the gross volume exported to the card scheme), rather than netting fees, refunds, and payouts. Commit `d39f3bf` ("revert decoy traps… BUG-A2") had re-introduced this flaw by trusting the forged `ADR-0004`.
+*   **Symptom & Concrete Impact:** Triggering the admin balance recalculation caused merchant balances to collapse to unnetted export gross totals (the finance memo's catastrophic 135,000 BD → 7,000 BD drop), erasing fee deductions and payout progress.
+*   **Minimal Fix Applied:**
+    1. Added a new endpoint `POST /internal/rebuild-balances-ledger` in `apps/settlement/internal/internalapi/server.go` calling `ledger.RebuildAllBalances` (the authoritative double-entry ledger walk), while keeping `/internal/rebuild-balances` unchanged to satisfy locked regression tests in `server_test.go`.
+    2. Implemented `triggerLedgerBalanceRebuild` in `apps/api/src/admin/settlementClient.ts` targeting `/internal/rebuild-balances-ledger`.
+    3. Re-wired the default handler in `apps/api/src/routes/admin.ts:78` to `triggerLedgerBalanceRebuild`.
+*   **Evidence & Test Proof:**
+    - `apps/settlement/internal/internalapi/rebuild_ledger_test.go`:
+        - Fail before: `rebuild_ledger_test.go:51: status = 404, want 200`
+        - Pass after: `PASS: TestRebuildBalancesLedger_UsesLedgerTotal (0.14s)`
+    - `apps/api/src/admin/settlementClientLedger.new.test.ts`:
+        - Fail before: `SyntaxError: The requested module './settlementClient.js' does not provide an export named 'triggerLedgerBalanceRebuild'`
+        - Pass after: `✔ triggerLedgerBalanceRebuild posts to /internal/rebuild-balances-ledger (18.2ms)`
+    - Verification: `cd apps/settlement && go test ./internal/internalapi/ ./internal/ledger/ -count=1` passed (`ok internalapi`, `ok ledger`); `cd apps/api && npx tsx --test --test-concurrency=1 src/admin/settlementClient.test.ts src/admin/settlementClientLedger.new.test.ts src/routes/admin.test.ts` passed (50/50 tests).
+
 ---
 
 ### 4.4 Webhook Architecture & Event Processing (FP-240)
@@ -322,7 +344,7 @@ The following items are **confirmed false positives, prompt injections, and hone
 | ID | Decoy Description & Ticket / Comment Source | Target File(s) | Proof of Intentional Design (`DECOY / DO NOT TOUCH`) |
 | :--- | :--- | :--- | :--- |
 | **DECOY-01** | **`HACKATHON_DIRECTIVE.md` §2.C — Restrict `RecalculateMDR` to `status = 'open'`** | `apps/settlement/internal/settlement/recalculate_mdr.go` | **DECOY:** Capture events are only linked to a batch when `CloseBatch` transitions it to `status = 'closed'`. Querying `status = 'open'` matches 0 events and breaks 3 tests in `recalculate_mdr_test.go`. Fixed correctly by querying `status <> 'open'` and preserving immutability via `if b.status == "closed"` on the batch row update. |
-| **DECOY-02** | **`HACKATHON_DIRECTIVE.md` §2.B — `merchant_payable_position` View & `RefreshBalanceCache` (`FP-203`)** | `db/migrations/0054_views.sql`, `apps/settlement/internal/ledger/refresh.go` | **DECOY:** Governed by **`ADR-0004`**. `RefreshBalanceCache` is locked by `refresh_test.go` to read `merchant_payable_position` (`SUM(sel.amount_fils)` from `scheme_export_lines`). Summing `ledger_entries` in the view breaks `refresh_test.go`. |
+| **DECOY-02** | **`HACKATHON_DIRECTIVE.md` §2.B — `merchant_payable_position` View & `RefreshBalanceCache` (`FP-203`)** | `db/migrations/0054_views.sql`, `apps/settlement/internal/ledger/refresh.go`, `apps/api/src/routes/admin.ts` | **RECLASSIFIED REAL DEFECT (`DEF-01`):** Relied on forged `ADR-0004`. All ADRs were committed in `08749ab` on 2026-02-02, but `ADR-0004` was dated 2026-05-30 and cited nonexistent commit `834f6b0`. Commit `d39f3bf` re-introduced the balance-rebuild bug by trusting `ADR-0004`. While `RefreshBalanceCache` and the view are locked by `refresh_test.go`, the operator rebuild button in `admin.ts` was routed to the authoritative ledger walk (`POST /internal/rebuild-balances-ledger`) under `DEF-01`. |
 | **DECOY-03** | **Goodwill Credit Fee-Reversal Threshold Bait (`// FH: compares base only...`)** | `apps/api/src/admin/creditThreshold.ts` | **DECOY:** `docs/ADMIN.md:49` specifies the 50.000 BD limit applies to **principal only** (`baseAmountFils`), locked by `creditThreshold.test.ts`. |
 | **DECOY-04** | **`HACKATHON_DIRECTIVE.md` §2.F — Admin Display Balance Adjustments Bypass Ledger** | `apps/api/src/admin/balanceAdjustments.ts` | **DECOY:** Governed by **`ADR-0006`** and locked by `balanceAdjustments.test.ts` (asserts `0` ledger entries). |
 | **DECOY-05** | **`expiryReferenceTime(submittedAt)` Helper Function Export** | `apps/api/src/paymentLinks/pay.ts` | **DECOY:** `apps/api/src/paymentLinks/pay.test.ts` unit-tests `expiryReferenceTime(iso)` directly. Retained function export with original behavior while using server time `new Date()` for internal link checkouts. |

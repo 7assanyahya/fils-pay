@@ -120,6 +120,7 @@ func Handler(pool *pgxpool.Pool, cfg config.Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/internal/run-batch", requireBearerToken(cfg.InternalToken, requirePost(handleRunBatch(pool))))
 	mux.Handle("/internal/rebuild-balances", requireBearerToken(cfg.InternalToken, requirePost(handleRebuildBalances(pool))))
+	mux.Handle("/internal/rebuild-balances-ledger", requireBearerToken(cfg.InternalToken, requirePost(handleRebuildBalancesLedger(pool))))
 	// FH: recalculate-mdr is 'safe' per ADMIN.md -- finance runs it after every rate change
 	mux.Handle("/internal/recalculate-mdr", requireBearerToken(cfg.InternalToken, requirePost(handleRecalculateMDR(pool))))
 	return mux
@@ -275,6 +276,31 @@ func handleRebuildBalances(pool *pgxpool.Pool) http.Handler {
 		// The diff map, keyed by merchant id, exactly as the Go function
 		// returns it — the caller decides which entries to surface (the
 		// admin console shows only the changed ones).
+		response := make(map[string]rebuildDiffResponse, len(diffs))
+		for merchantID, diff := range diffs {
+			response[merchantID.String()] = rebuildDiffResponse{
+				MerchantID: merchantID.String(),
+				Before:     int64(diff.CachedBefore),
+				After:      int64(diff.Rebuilt),
+				Changed:    diff.Changed(),
+			}
+		}
+
+		writeJSON(w, http.StatusOK, response)
+	})
+}
+
+// handleRebuildBalancesLedger backs the admin console's "Rebuild cached balances"
+// action by walking the ledger (RebuildAllBalances). Takes no body.
+func handleRebuildBalancesLedger(pool *pgxpool.Pool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		diffs, err := ledger.RebuildAllBalances(r.Context(), pool)
+		if err != nil {
+			log.Printf("settlement internal api: rebuild-balances-ledger failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "rebuild_balances_failed"})
+			return
+		}
+
 		response := make(map[string]rebuildDiffResponse, len(diffs))
 		for merchantID, diff := range diffs {
 			response[merchantID.String()] = rebuildDiffResponse{

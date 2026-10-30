@@ -234,6 +234,40 @@ export async function triggerBalanceRebuild(config: SettlementInternalConfig): P
 }
 
 /**
+ * Invokes apps/settlement's balance rebuild through its internal HTTP
+ * server via the authoritative ledger walk (/internal/rebuild-balances-ledger).
+ */
+export async function triggerLedgerBalanceRebuild(config: SettlementInternalConfig): Promise<RebuildSummary> {
+  const decoded = await callSettlementInternal(config, "/internal/rebuild-balances-ledger", {});
+  if (!isRecord(decoded)) {
+    throw new AppError(
+      500,
+      "settlement_run_failed",
+      "settlement rebuild-balances-ledger returned a non-object body",
+    );
+  }
+
+  const changed: RebuildDiff[] = [];
+  let rebuiltCount = 0;
+
+  for (const [key, value] of Object.entries(decoded)) {
+    if (!isRecord(value)) continue;
+    rebuiltCount += 1;
+    const before = asNumber(pick(value, "CachedBefore", "cachedBefore", "before"));
+    const after = asNumber(pick(value, "Rebuilt", "rebuilt", "after"));
+    if (before !== after) {
+      changed.push({
+        merchantId: asString(pick(value, "MerchantID", "merchantId", "MerchantId") ?? key),
+        before,
+        after,
+      });
+    }
+  }
+
+  return { rebuiltCount, changed };
+}
+
+/**
  * Invokes apps/settlement's `settlement.RecalculateMDR` through its internal
  * HTTP server. Same posture as the two triggers above: the fee-recomputation
  * math lives in Go, next to the CloseBatch formula it has to agree with, and

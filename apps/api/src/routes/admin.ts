@@ -6,6 +6,7 @@ import { UUID_RE } from "../admin/merchants.js";
 import { refreshAnalyticsRollups } from "../admin/reportingRebuild.js";
 import {
   triggerBalanceRebuild,
+  triggerLedgerBalanceRebuild,
   triggerMdrRecalculation,
   triggerSettlementRunBatch,
   type MdrRecalcSummary,
@@ -75,7 +76,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export async function adminRoutes(app: FastifyInstance, options: AdminRoutesOptions = {}): Promise<void> {
   const runBatch = options.settlement?.runBatch ?? triggerSettlementRunBatch;
-  const rebuildBalances = options.settlement?.rebuildBalances ?? triggerBalanceRebuild;
+  const rebuildBalances = options.settlement?.rebuildBalances ?? triggerLedgerBalanceRebuild;
   const recalculateMdr = options.settlement?.recalculateMdr ?? triggerMdrRecalculation;
 
   await app.register(adminAuthRoutes, { prefix: "/auth" });
