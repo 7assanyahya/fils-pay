@@ -453,7 +453,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/api -- src/routes/auth
    ```
 
-### [ ] Step 6: Replace Weak `Math.random()` with CSPRNG `crypto.randomInt` (`BUG-A6`)
+### [x] Step 6: Replace Weak `Math.random()` with CSPRNG `crypto.randomInt` (`BUG-A6`)
 1. Edit `apps/api/src/lib/random.ts` to use `randomInt` from `"node:crypto"` in both `randomDigits` and `randomFromAlphabet`.
 2. Edit `apps/api/src/admin/inviteCode.ts` to import `randomInt` from `"node:crypto"` and use `INVITE_ALPHABET[randomInt(0, INVITE_ALPHABET.length)]`.
 3. Verify with:

@@ -1,7 +1,9 @@
+import { randomInt } from "node:crypto";
+
 /** Generates a string of `n` random decimal digits (e.g. "042817"). */
 export function randomDigits(n: number): string {
   const max = 10 ** n;
-  return Math.floor(Math.random() * max)
+  return randomInt(0, max)
     .toString()
     .padStart(n, "0");
 }
@@ -10,7 +12,7 @@ export function randomDigits(n: number): string {
 export function randomFromAlphabet(alphabet: string, n: number): string {
   let out = "";
   for (let i = 0; i < n; i++) {
-    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    out += alphabet[randomInt(0, alphabet.length)];
   }
   return out;
 }
