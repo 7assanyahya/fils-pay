@@ -46,6 +46,14 @@ export function errorHandler(
     return;
   }
 
+  // Every pooled DB connection stayed busy for the whole acquire timeout:
+  // the service is saturated, not broken. Tell the client to retry.
+  if (err.message === "timeout exceeded when trying to connect") {
+    request.log.warn({ occurredOn: formatIsoDate(new Date()) }, "db pool saturated");
+    reply.header("retry-after", "1").code(503).send({ error: "service_busy" });
+    return;
+  }
+
   request.log.error({ err, occurredOn: formatIsoDate(new Date()) }, "unhandled error");
   reply.code(500).send({ error: "internal_error" });
 }

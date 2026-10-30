@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Pool } from "pg";
 import type { Config } from "./config.js";
 import { createAcquirerSimulator } from "./acquirer/simulator.js";
@@ -47,6 +47,29 @@ export function buildApp(config: Config, pool: Pool, options: BuildAppOptions = 
   app.decorate("acquirer", createAcquirerSimulator(config));
   app.decorate("loginThrottle", createLoginThrottle());
   app.decorate("webhookTransport", options.webhookTransport ?? createFetchTransport({ blockPrivateNetworks: config.nodeEnv === "production" }));
+
+  // Load shedding: past maxInflightRequests concurrent requests, answer 503
+  // straight away instead of queueing work the process can't finish in time.
+  // Health probes are exempt so an overloaded process isn't restarted for it.
+  let inflight = 0;
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.url.startsWith("/healthz") || request.url.startsWith("/readyz")) return;
+    if (inflight >= config.maxInflightRequests) {
+      reply.header("retry-after", "1").code(503).send({ error: "overloaded" });
+      return reply;
+    }
+    inflight += 1;
+    (request as { countedInflight?: boolean }).countedInflight = true;
+  });
+  const releaseInflight = async (request: FastifyRequest) => {
+    const counted = request as FastifyRequest & { countedInflight?: boolean };
+    if (counted.countedInflight) {
+      counted.countedInflight = false;
+      inflight -= 1;
+    }
+  };
+  app.addHook("onResponse", releaseInflight);
+  app.addHook("onRequestAbort", releaseInflight);
 
   app.register(cookiesPlugin);
   app.register(multipartPlugin, { config });
