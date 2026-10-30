@@ -153,18 +153,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         throw new GoneError("otp_expired");
       }
 
-      // am: check-then-increment is fine, max_attempts=5 so worst case is 5 guesses
-      // MK: 5 guesses per parallel batch? if i fire 50 at once they all read attempt_count=0
-      if (challenge.attempt_count >= challenge.max_attempts) {
+      // Spend an attempt atomically BEFORE comparing. Reading attempt_count
+      // and incrementing it afterwards let 50 parallel guesses all read 0
+      // and all get checked, so max_attempts capped nothing.
+      const attempt = await app.db.query(
+        `UPDATE otp_challenges SET attempt_count = attempt_count + 1
+          WHERE id = $1 AND attempt_count < max_attempts AND consumed_at IS NULL
+          RETURNING id`,
+        [challenge.id],
+      );
+      if (attempt.rowCount === 0) {
         await revokeSession(app.db, pending.sessionId);
         throw new TooManyRequestsError("too_many_attempts");
       }
 
       const matches = verifyOtpCode(code, challenge.code_salt, challenge.code_hash);
       if (!matches) {
-        await app.db.query(`UPDATE otp_challenges SET attempt_count = attempt_count + 1 WHERE id = $1`, [
-          challenge.id,
-        ]);
         throw new UnauthorizedError("invalid_code");
       }
 

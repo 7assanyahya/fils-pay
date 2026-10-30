@@ -163,7 +163,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 14: Atomic OTP Attempt Counter on `/otp/verify` (While Preserving `/otp/resend` Attempt Inheritance)
+### [x] Step 14: Atomic OTP Attempt Counter on `/otp/verify` (While Preserving `/otp/resend` Attempt Inheritance)
 - **Why:**
   - In `apps/api/src/routes/auth.ts` (`POST /v1/auth/otp/verify`) and `apps/api/src/routes/adminAuth.ts` (`POST /v1/admin/auth/otp/verify`), checking `challenge.attempt_count >= challenge.max_attempts` in JS and incrementing `attempt_count` only after a failed check allowed 50 parallel requests to all read `attempt_count = 0` and bypass the 5-attempt cap.
   - **CRITICAL MERGE NOTE:** Do NOT overwrite `apps/api/src/routes/auth.ts` wholesale with `6f3d325`, because `hackathon-resolution` fixed `POST /v1/auth/otp/resend` (`BUG-A5`) to pass `attemptCount: existingChallenge?.attempt_count ?? 0` into `issueChallenge`, which `6f3d325` missed!
