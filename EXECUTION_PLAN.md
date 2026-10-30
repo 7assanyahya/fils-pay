@@ -124,7 +124,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 12: Preserve `paid` Batch Row Immutability During `RecalculateMDR`
+### [x] Step 12: Preserve `paid` Batch Row Immutability During `RecalculateMDR`
 - **Why:** When `RecalculateMDR` (`apps/settlement/internal/settlement/recalculate_mdr.go`) runs across historical `status <> 'open'` batches, it posts the balanced `mdr_adjustment` ledger entries and updates `merchant_balances` for both `closed` and `paid` batches. However, for a batch that is already `paid`, the wire transfer has already left at the old `net_payout_fils`, so mutating `settlement_batches.fee_fils` and `net_payout_fils` on a `paid` row corrupts historical payout records (`HACKATHON_DIRECTIVE.md` §2.C). Wrapping the `UPDATE settlement_batches` in `if b.status == "closed"` keeps `paid` batch rows immutable while still posting the ledger adjustment and passing all existing and new tests.
 - **Action:**
   ```bash
