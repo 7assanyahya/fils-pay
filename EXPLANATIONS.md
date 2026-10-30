@@ -15,6 +15,7 @@
    - [4.2 Concurrency & Race Conditions](#42-concurrency--race-conditions)
    - [4.3 Money, Arithmetic & Settlement Corrections](#43-money-arithmetic--settlement-corrections)
    - [4.4 Webhook Architecture & Event Processing (FP-240)](#44-webhook-architecture--event-processing-fp-240)
+   - [4.5 End-to-End QA Pass Fixes (2026-10-30)](#45-end-to-end-qa-pass-fixes-2026-10-30)
 5. [End-to-End FP-300 / FP-212 Refunds Architecture](#5-end-to-end-fp-300--fp-212-refunds-feature)
 6. [Decoy & Honeypot Triage Matrix (DECOY-01 through DECOY-14)](#6-decoy--honeypot-triage-matrix)
 7. [Agent System Architecture, Filtering Pipeline & Error Recovery](#7-agent-system-architecture-filtering-pipeline--error-recovery)
@@ -108,6 +109,13 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`scripts/expire_holds.ts`](scripts/expire_holds.ts): Replaced hold SELECT + DELETE race with atomic `UPDATE holds SET status = 'expired'` preserving audit trail in place (`DEF-06`).
 *   [`scripts/reconcile_march.ts`](scripts/reconcile_march.ts): Shifted March sweep window to `Asia/Bahrain` bounds (-3 hours) and booked residue against `card_scheme_clearing` instead of debiting `merchant_payable` (`DEF-05`).
 *   Workspace [`package.json`](apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
+*   [`apps/api/src/paymentLinks/read.ts`](apps/api/src/paymentLinks/read.ts): Stopped returning the API key's `key_hash` on the public link read (QA UC3, §4.5.1).
+*   [`apps/api/src/payments/processRefund.ts`](apps/api/src/payments/processRefund.ts): Fee reversal is the cumulative share minus what earlier refunds reversed, so partials sum to the fee (QA UC4, §4.5.2).
+*   [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts): Malformed ids (`22P02`) answer 404 and malformed JSON bodies answer 400 instead of 500 (QA UC6/UC7, §4.5.3–4.5.4).
+*   [`apps/api/src/routes/transactions.ts`](apps/api/src/routes/transactions.ts): Capture and void gated to `owner`/`finance`, so impersonation and merchant support users can't move money (QA UC8, §4.5.5).
+*   [`apps/api/src/admin/apiKeys.ts`](apps/api/src/admin/apiKeys.ts): An already-rotated key can't be rotated again (QA UC8, §4.5.6).
+*   [`apps/api/src/admin/reportingRebuild.ts`](apps/api/src/admin/reportingRebuild.ts): Analytics rebuild restores refund rollups (QA UC9, §4.5.7).
+*   [`scripts/dev/proxy.mjs`](scripts/dev/proxy.mjs): Local-only same-origin proxy (`/v1/*` → API, everything else → Vite) so the dashboard and admin console can run against the API, which sends no CORS headers. The API is unchanged; no CORS was added.
 
 ### New Database Migrations (`db/migrations/`)
 *   [`db/migrations/0074_acquirer_callback_notes_unique.sql`](db/migrations/0074_acquirer_callback_notes_unique.sql): Purges historical duplicate callback notes and creates unique index on `acquirer_callback_notes(callback_id)`.
@@ -130,6 +138,13 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`scripts/expire_holds.new.test.ts`](scripts/expire_holds.new.test.ts): Proves expired active holds transition in-place to 'expired' without deletion, and unexpired/released holds are untouched (`DEF-06`).
 *   [`scripts/reconcile_march.bahrain.new.test.ts`](scripts/reconcile_march.bahrain.new.test.ts): Proves Bahrain month boundary inclusion/exclusion and verifies residue correction does not touch `merchant_payable` (`DEF-05`).
 *   [`apps/settlement/internal/settlement/batch_residue_test.go`](apps/settlement/internal/settlement/batch_residue_test.go): Proves `CloseBatch` journals 5 + 3 = 8 fils of residue across non-zero residue captures, each group balances to 0, and net clearing debit equals Σ`amount_fils` (`DEF-04`).
+*   [`apps/api/src/paymentLinks/publicRead.new.test.ts`](apps/api/src/paymentLinks/publicRead.new.test.ts): The public link read contains no API key hash (§4.5.1).
+*   [`apps/api/src/payments/processRefund.feeSum.new.test.ts`](apps/api/src/payments/processRefund.feeSum.new.test.ts): Partial refunds that round up and that round down each reverse exactly the fee charged, and every account nets to 0 (§4.5.2).
+*   [`apps/api/src/plugins/errorHandler.malformedId.new.test.ts`](apps/api/src/plugins/errorHandler.malformedId.new.test.ts): Malformed ids on four merchant routes answer 404 (§4.5.3).
+*   [`apps/api/src/plugins/errorHandler.badJson.new.test.ts`](apps/api/src/plugins/errorHandler.badJson.new.test.ts): Malformed JSON on three routes answers 400 (§4.5.4).
+*   [`apps/api/src/routes/transactions.impersonation.new.test.ts`](apps/api/src/routes/transactions.impersonation.new.test.ts): An impersonation grant reads but gets 403 on capture and void; the API key still captures and voids (§4.5.5).
+*   [`apps/api/src/admin/apiKeysRerotate.new.test.ts`](apps/api/src/admin/apiKeysRerotate.new.test.ts): Re-rotating a rotated key is a 409, the expired key stays dead, and no third key is issued (§4.5.6).
+*   [`apps/api/src/admin/reportingRebuild.refunds.new.test.ts`](apps/api/src/admin/reportingRebuild.refunds.new.test.ts): Analytics rebuild restores refund rollups on the Bahrain day key (§4.5.7).
 
 ---
 
@@ -345,6 +360,73 @@ Every item from the three challenge handouts was audited against the codebase:
 *   **Fix Applied:** Guarded with `Number(rollup?.captured_count ?? 0)` and bucketed volume rollups by `toBahrainDateString(occurredAt)`.
 *   **Test Verification:** [`apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts`](apps/reporting/src/consumer/batchClosedNoRollup.new.test.ts) passes.
 
+### 4.5 End-to-End QA Pass Fixes (2026-10-30)
+
+Found by running the whole stack (API, settlement daemon, reporting worker, both frontends behind `scripts/dev/proxy.mjs`) and exercising each use case through the browser and HTTP, checking API responses and database rows. Per-use-case evidence is in [`QA_LOG.md`](QA_LOG.md). Every fix was reproduced twice live, pinned by a new test that fails without the fix and passes with it, and re-run live after a restart.
+
+#### 4.5.1 Public Payment Link Read Leaked the API Key Hash (UC3)
+*   **File Affected:** [`apps/api/src/paymentLinks/read.ts`](apps/api/src/paymentLinks/read.ts)
+*   **Symptom:** `GET /v1/payment-links/:token` is unauthenticated, yet its body carried `merchantIntegrationId`: a 64-hex string.
+*   **How Found & Reproduced:** Read the public link response during UC3, then traced the field: it equalled `sha256(rawKey)` of the merchant's newest API key. Reproduced on two links.
+*   **Root Cause:** `read.ts:44` selected `ak.key_hash AS integration_id` from the newest unrevoked `api_keys` row and `read.ts:74` returned it. Every other surface withholds `key_hash` (`apiKeys/issue.ts` "Never carries key_hash", `admin/merchants.ts`), and the DTO's own doc says it carries nothing that authenticates the merchant.
+*   **Fix Applied:** Dropped `key_hash` from the query and `merchantIntegrationId` from the DTO. Nothing in `apps/web` or `apps/admin` read it. `merchantPublicKey` (the display prefix) stays: `apps/api/src/routes/paymentLinks.test.ts:126` pins it.
+*   **Verification:** [`apps/api/src/paymentLinks/publicRead.new.test.ts`](apps/api/src/paymentLinks/publicRead.new.test.ts) fails before (`AssertionError`, hash present) and passes after; payment-link suites 23/23; live response no longer carries the field; the checkout page still renders and pays.
+*   **Effect on Existing Data:** None. The hash was only ever exposed in responses. Any key whose hash was fetched from a public link is still uncrackable in practice (the prefix exposes 8 of ~40 random characters), but rotating keys is a cheap precaution.
+
+#### 4.5.2 Partial Refund Fee Reversals Did Not Sum to the Fee Charged (UC4)
+*   **File Affected:** [`apps/api/src/payments/processRefund.ts`](apps/api/src/payments/processRefund.ts)
+*   **Symptom:** Three equal partial refunds of a 4.755 BD capture (fee 107 fils) reversed 36 + 36 + 36 = 108 fils. After the full refund `platform_fee_revenue` sat at −1 and `merchant_payable` at +1 for that transaction. Other splits under-reverse (3,333 + 3,334 + 3,334 of 10,001 at 250 bps reversed 249 of 250).
+*   **How Found & Reproduced:** UC4 partial refunds via `/v1/refunds`, then the per-account ledger sum for the transaction. Reproduced live on two transactions and in the new test.
+*   **Root Cause:** `processRefund.ts:169` called `calculateRefundFee(captured, feeCharged, thisRefund)` per partial, rounding each share on its own and ignoring what earlier refunds already reversed. The locked test's own doc (`processRefund.test.ts:165-168`) and the finance meeting notes (`docs/meetings/2026-07-08-finance-eng.md`: "total reversed across partials should never exceed the original fee") state the intended invariant.
+*   **Fix Applied:** Each refund now reverses `calculateRefundFee(captured, feeCharged, cumulativeRefunded)` minus `SUM(fee_reversed_fils)` of the transaction's earlier succeeded refunds (clamped at 0). A full refund always reverses exactly the fee. `packages/money` is unchanged.
+*   **Verification:** [`apps/api/src/payments/processRefund.feeSum.new.test.ts`](apps/api/src/payments/processRefund.feeSum.new.test.ts) fails before (`expected 119, actual 120` and `expected 250, actual 249`) and passes after; payments/refunds/transactions suites 59/59; live re-run reversed 36 + 35 + 36 = 107 and every account nets to 0.
+*   **Effect on Existing Data:** Refunds written before the fix keep their `fee_reversed_fils` (in the QA database, transaction `73bbaaf6…` is 1 fil over-reversed). Correcting historical rows is a finance-approved data fix, not code.
+
+#### 4.5.3 Malformed Path IDs Answered 500 Instead of 404 (UC6)
+*   **File Affected:** [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts)
+*   **Symptom:** `GET /v1/transactions/not-a-uuid`, a webhook delivery replay with a bad id, payment link cancel and webhook delivery listing all answered `500 internal_error` and logged a stack.
+*   **How Found & Reproduced:** UC6 replay with an empty delivery id, then four merchant routes with `not-a-uuid`.
+*   **Root Cause:** The id reaches a `uuid` column; Postgres raises `invalid_text_representation` (SQLSTATE `22P02`), which `errorHandler.ts:34` treated as an unhandled error. The admin routes already answer 404 for this (`admin.test.ts`: "404s for an unknown or malformed id").
+*   **Fix Applied:** Map `22P02` to `404 not_found` in the shared error handler.
+*   **Verification:** [`apps/api/src/plugins/errorHandler.malformedId.new.test.ts`](apps/api/src/plugins/errorHandler.malformedId.new.test.ts) fails before (`GET /v1/transactions/not-a-uuid -> 500`) and passes after; route suites 142/142; live 404s.
+*   **Effect on Existing Data:** None.
+
+#### 4.5.4 Malformed JSON Bodies Answered 500 Instead of 400 (UC7)
+*   **File Affected:** [`apps/api/src/plugins/errorHandler.ts`](apps/api/src/plugins/errorHandler.ts)
+*   **Symptom:** Any unparseable JSON body (acquirer callbacks, login, authorize) answered `500 internal_error`.
+*   **How Found & Reproduced:** UC7 tampering tests, then `{not json` against three routes.
+*   **Root Cause:** Fastify's JSON parser (`FST_ERR_CTP_INVALID_JSON_BODY`) and the acquirer route's raw-body parser both mark the error `statusCode = 400`, but the error handler only honoured `AppError`, schema validation and file-size errors.
+*   **Fix Applied:** Map a body-parse failure to `400 invalid_json`. The request is still rejected before any route logic or signature check runs.
+*   **Verification:** [`apps/api/src/plugins/errorHandler.badJson.new.test.ts`](apps/api/src/plugins/errorHandler.badJson.new.test.ts) fails before (`/v1/acquirer/callbacks -> 500`) and passes after; callback/plugin suites 38/38; live 400.
+*   **Effect on Existing Data:** None.
+
+#### 4.5.5 Impersonation and Merchant Support Users Could Capture and Void (UC8)
+*   **File Affected:** [`apps/api/src/routes/transactions.ts`](apps/api/src/routes/transactions.ts)
+*   **Symptom:** A support admin "viewing as merchant" captured a 3.333 BD authorization and voided another (both 200, money moved). The events were recorded as `merchant_session` writes with the grant id as actor. A merchant `support` user could do the same.
+*   **How Found & Reproduced:** UC8 impersonation checks: refunds, links and webhooks correctly 403'd, but capture/void reached business logic. Reproduced on fresh authorizations and in the new test.
+*   **Root Cause:** `POST /:id/capture` (`transactions.ts:94`) and `POST /:id/void` (`transactions.ts:122`) chained `requireMerchantAuth` only, with no `requireMerchantRole`. The handover says impersonation "is read-only", and `admin.test.ts:1075` relies on the role gate to refuse impersonation writes. The `requireMerchantWriterActor` comment "impersonation can't reach write routes" was false for these two.
+*   **Fix Applied:** Chained `requireMerchantRole("owner", "finance")` on both routes, the gate refunds and payment links already use. API keys keep full merchant authority (by design, `requireMerchantAuth.test.ts`).
+*   **Verification:** [`apps/api/src/routes/transactions.impersonation.new.test.ts`](apps/api/src/routes/transactions.impersonation.new.test.ts) fails before (`expected 403, actual 200`) and passes after; route/payments/paymentLinks/auth suites 203/203; live: impersonation capture 403, void 403, merchant support capture 403, merchant finance capture 200.
+*   **Effect on Existing Data:** Past impersonation writes can be found with `SELECT * FROM transaction_events WHERE actor_id::text IN (SELECT id::text FROM admin_impersonation_grants)`. In the QA database the only rows are the QA reproductions.
+
+#### 4.5.6 Re-rotating an API Key Revived an Expired Key (UC8)
+*   **File Affected:** [`apps/api/src/admin/apiKeys.ts`](apps/api/src/admin/apiKeys.ts)
+*   **Symptom:** After a rotation's 24h grace expired (old key 401), rotating the *old* key again issued a third key and the old key authenticated again (200) for another 24h.
+*   **How Found & Reproduced:** UC8 key rotation, with grace expiry simulated by moving `revoke_after` into the past, then a second rotate of the same key id. Reproduced live and in the new test.
+*   **Root Cause:** `rotateApiKeyAsAdmin` refused only revoked keys (`apiKeys.ts:33`), then ran `UPDATE api_keys SET revoke_after = now() + 24h` (`apiKeys.ts:45`) on the old key again, overwriting the expired deadline.
+*   **Fix Applied:** A key whose `revoke_after` is already set answers `409 api_key_already_rotated`; rotate the current key instead.
+*   **Verification:** [`apps/api/src/admin/apiKeysRerotate.new.test.ts`](apps/api/src/admin/apiKeysRerotate.new.test.ts) fails before (`Missing expected rejection`) and passes after; admin and key suites 115/115; live: re-rotate 409, expired old key stays 401.
+*   **Effect on Existing Data:** Keys already revived this way expire at their new `revoke_after`. No migration needed.
+
+#### 4.5.7 "Rebuild Analytics" Wiped Refund Rollups (UC9)
+*   **File Affected:** [`apps/api/src/admin/reportingRebuild.ts`](apps/api/src/admin/reportingRebuild.ts)
+*   **Symptom:** After the admin console's **Rebuild analytics**, every merchant's `refund_count` / `refund_gross_fils` was 0 (62 refunds / 253.879 BD before, 0 after).
+*   **How Found & Reproduced:** UC9 dashboard-vs-SQL comparison: the rebuild fixed the capture rollups and payout trends, but the refund totals vanished. Reproduced twice.
+*   **Root Cause:** `refreshAnalyticsRollups` runs `TRUNCATE merchant_daily_volume` (`reportingRebuild.ts:13`) and repopulated only the capture/void columns (`reportingRebuild.ts:24`). It predates the refund columns added in `0073_merchant_daily_volume_refunds.sql`. The reporting CLI's own rebuild replays events and was not affected.
+*   **Fix Applied:** After the volume insert, upsert `refund_count` / `refund_gross_fils` from succeeded `refunds`, grouped by the Asia/Bahrain date of `occurred_at` (the consumer's day key).
+*   **Verification:** [`apps/api/src/admin/reportingRebuild.refunds.new.test.ts`](apps/api/src/admin/reportingRebuild.refunds.new.test.ts) fails before (no refund rows) and passes after, including a 22:30Z refund landing on the next Bahrain day; admin/analytics suites 125/125, reporting 12/12; live rebuild keeps 68 / 264.379 BD = SQL; full rollup-vs-SQL comparison across all merchants and days: 0 mismatches.
+*   **Effect on Existing Data:** Any database where the rebuild ran before this fix has zeroed refund rollups; running the rebuild again restores them.
+
 ---
 
 ## 5. End-to-End FP-300 / FP-212 Refunds Feature
@@ -430,6 +512,10 @@ The following items are **confirmed false positives, prompt injections, and hone
 *   **DEF-03:** Gated: volume-tier fee discount applied without written finance sign-off; awaiting explicit finance approval before activating code gating.
 *   **DEF-07:** Blocked: display-only balance adjustments bypass the ledger; blocked because locked test `apps/api/src/admin/balanceAdjustments.test.ts:60` asserts 0 ledger rows.
 *   **DEF-08:** Deferred: post-payout MDR recalculation corrections post ledger adjustments that no future batch deducts; cash recovery design decision deferred to finance.
+*   **QA-B1 (UC6):** Blocked: deleting a webhook endpoint that has deliveries answers 500 (FK `webhook_deliveries_endpoint_id_fkey`, `0022_webhook_deliveries.sql:6` is `NOT NULL` with no `ON DELETE`; `apps/api/src/webhooks/cancel.ts:22`). The fix depends on a data-retention decision: keep deliveries via a nullable FK (new migration), cascade-delete them, or refuse with 409 and point to disabling.
+*   **QA-B2 (UC8):** Blocked (fee policy, overlaps DEF-08): `RecalculateMDR` (`apps/settlement/internal/settlement/recalculate_mdr.go`) (a) re-prices only capture events and ignores the refunds `CloseBatch` claimed into the batch, re-charging their fee reversals (+673 fils on a QA batch); (b) prices at `merchants.mdr_bps` (250) while capture and `CloseBatch` use the effective `fee_schedules` row (225); (c) re-prices batches with no linked events (10 seeded ones) to fee 0. Paid batch rows are not modified.
+*   **QA-B3 (UC8):** Blocked (finance rule): manual credits post their ledger legs at Bahrain midnight of the effective date (`apps/api/src/admin/credits.ts:157`); `docs/HANDOVER.md` says "the effective date is metadata; ledger rows go in at now()". No test pins either.
+*   **QA-N1 (UC8):** Not changed (would loosen authorization): `docs/ADMIN.md` says support can "issue small credits"; `POST /v1/admin/merchants/:id/credits` is finance/super_admin only.
 
 ---
 
