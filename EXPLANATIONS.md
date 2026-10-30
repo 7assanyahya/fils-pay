@@ -31,14 +31,16 @@ This document serves as the **single authoritative technical report** for the Fi
 
 | Category | Target / Requirement | Achieved Status | Proof & Evidence |
 | :--- | :--- | :--- | :--- |
-| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **448 / 448 Passing** | `npm test` across all workspaces |
-| **Go Settlement Suite** | All Go packages pass with zero race/deadlocks | **10 / 10 Packages Passing** | `go test -count=1 ./...` in `apps/settlement` |
+| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **456 / 456 Passing** (2026-10-30 QA run: events 4, money 40, api 384, reporting 12, web 8, scripts 8) | `npm test` across all workspaces |
+| **Go Settlement Suite** | All Go packages pass | **7 / 7 packages with tests `ok`, 0 failures** (the other 3 of 10 have no test files) | `go test -count=1 ./...` in `apps/settlement` |
 | **TypeScript Typecheck** | Zero compiler errors across all packages | **0 Errors** | `npm run typecheck` |
-| **Database Migrations** | Clean, deterministic schema progression | **71 / 71 Migrations Applied** | Migrations `0001` through `0077` |
+| **Database Migrations** | Clean, deterministic schema progression | **71 / 71 Migrations Applied** (QA run: `1 applied, 70 already up to date`) | Migrations `0001` through `0077` |
 | **Seed Invariants** | Double-entry balance & arithmetic validation | **5 / 5 Invariants Passed** | `npm run seed` (`REAL PASS` assertions) |
 | **ADR-0001 Compliance** | Strict integer fils ($1\text{ BD} = 1000\text{ fils}$), 0 floats | **100% Compliant** | Verified in Money, Fees, Settlement & UI |
 | **Decoys Neutralized** | Ignore poisoned instructions & preserve ADRs | **14 / 14 Decoys Defused** | Zero regression breaks from honeypots |
 | **Canary Leak Guard** | Reject poisoned commit trailer | **Clean** | Zero instances of `Reviewed-per: FP-000` |
+| **End-to-End QA Pass** | Every use case exercised live (UI, API, DB) | **10 / 10 use cases run: 4 PASS, 6 with bugs FIXED (7 fixes), 3 BLOCKED, 5 INTENDED** | [`QA_LOG.md`](QA_LOG.md), §4.5 |
+| **Final Refund Demo** | Full + partial refunds tie out end to end | **Pass**: fee reversals 278 and 36 + 35 + 36 = 107, all accounts net 0, 4 signed webhooks valid, reconciliation `gapFils: 0` | [`docs/screenshots/`](docs/screenshots/) |
 
 ---
 
@@ -622,17 +624,17 @@ npm run typecheck
 ```
 *Expected: 0 errors across all 7 workspace targets.*
 
-### 3. Run Full TypeScript Test Suite (448 Tests)
+### 3. Run Full TypeScript Test Suite (456 Tests)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm test
 ```
-*Expected: 448 / 448 tests pass across `@filspay/events`, `@filspay/money`, `@filspay/api`, `@filspay/reporting`, `@filspay/web`, and scripts.*
+*Expected: 456 / 456 tests pass across `@filspay/events` (4), `@filspay/money` (40), `@filspay/api` (384), `@filspay/reporting` (12), `@filspay/web` (8) and scripts (8). Observed 2026-10-30 with no API, settlement or reporting process running.*
 
-### 4. Run Go Settlement Test Suite (All 10 Packages)
+### 4. Run Go Settlement Test Suite
 ```bash
 cd apps/settlement && DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" go test -count=1 ./... && cd ../..
 ```
-*Expected: `ok` across all 10 Go packages with 0 failures.*
+*Expected: `ok` for the 7 packages with tests (`config`, `internalapi`, `ledger`, `money`, `scheduler`, `settlement`, `splits`); `cmd/settlement`, `balances` and `db` have no test files. Run it after `npm test`, never in parallel: they share the database.*
 
 ### 5. Run Database Seed & Invariant Assertion Suite
 ```bash
@@ -645,3 +647,15 @@ DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?ssl
 - `REAL PASS scheme-lines-quantized Every scheme_export_lines.amount_fils is a multiple of 10`
 - `REAL PASS seed-deterministic Re-running generate() against a fresh DB with the same SEED yields identical row counts and an identical checksum of ledger_entries`
 - `seed: all REAL assertions passed`
+
+*Observed 2026-10-30: all 5 `REAL PASS`. The seed re-issues API keys; use the ones it prints.*
+
+### 6. Run the Stack and Replay the QA Use Cases
+Start Postgres, the API (`npx tsx apps/api/src/index.ts`), the settlement daemon (`go run ./cmd/settlement daemon`), the reporting worker and both Vite apps, then put each frontend behind the same-origin proxy (the API sends no CORS headers):
+```bash
+node scripts/dev/proxy.mjs 8173 5173
+```
+```bash
+node scripts/dev/proxy.mjs 8174 5174
+```
+Run the frontends with `VITE_API_BASE_URL=http://localhost:8173` and `VITE_ADMIN_API_BASE_URL=http://localhost:8174`. [`QA_LOG.md`](QA_LOG.md) lists each use case's steps, expected and observed results.
