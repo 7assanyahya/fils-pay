@@ -75,3 +75,4 @@ export function FilsPayLogo({ size = "md", subtitle, className = "" }: LogoProps
     </div>
   );
 }
+

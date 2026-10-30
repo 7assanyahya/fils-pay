@@ -73,3 +73,4 @@ export function FilsPayLogo({ size = "md", subtitle = "Admin Console", className
     </div>
   );
 }
+
