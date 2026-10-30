@@ -103,6 +103,8 @@ export interface ApiKeySummary {
   createdAt: Date;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  /** Set once the key has been rotated: it keeps working until this instant. */
+  revokeAfter: Date | null;
 }
 
 export async function listApiKeys(pool: Pool, merchantId: string): Promise<ApiKeySummary[]> {
@@ -113,8 +115,9 @@ export async function listApiKeys(pool: Pool, merchantId: string): Promise<ApiKe
     created_at: Date;
     last_used_at: Date | null;
     revoked_at: Date | null;
+    revoke_after: Date | null;
   }>(
-    `SELECT id, key_prefix, label, created_at, last_used_at, revoked_at
+    `SELECT id, key_prefix, label, created_at, last_used_at, revoked_at, revoke_after
        FROM api_keys
       WHERE merchant_id = $1
       ORDER BY created_at DESC`,
@@ -127,6 +130,7 @@ export async function listApiKeys(pool: Pool, merchantId: string): Promise<ApiKe
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
     revokedAt: row.revoked_at,
+    revokeAfter: row.revoke_after,
   }));
 }
 

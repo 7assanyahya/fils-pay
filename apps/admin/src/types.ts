@@ -103,6 +103,8 @@ export interface AdminApiKeySummary {
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
+  /** Set once the key has been rotated: it keeps working until this instant. */
+  revokeAfter: string | null;
 }
 
 /** `webhook_endpoints` (migration 0021) — `secret_ciphertext` is never selected. */

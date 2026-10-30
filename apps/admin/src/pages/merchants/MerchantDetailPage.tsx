@@ -9,7 +9,7 @@ import { startImpersonation } from "../../api/impersonation.js";
 import { describeError, WEB_BASE_URL } from "../../api/client.js";
 import { useAdminAuth } from "../../auth/AdminAuthContext.js";
 import { RequireRole } from "../../auth/RequireRole.js";
-import type { AdminMerchantDetail, CreditReasonCode, RotatedApiKey } from "../../types.js";
+import type { AdminApiKeySummary, AdminMerchantDetail, CreditReasonCode, RotatedApiKey } from "../../types.js";
 
 function bhd(fils: number): string {
   return `${formatBhd(toFils(fils, { allowNegative: true }))} BHD`;
@@ -21,6 +21,18 @@ function todayIso(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
     now.getDate(),
   ).padStart(2, "0")}`;
+}
+
+/** Human status for an API key row: rotated keys keep working until revokeAfter. */
+function apiKeyStatus(key: AdminApiKeySummary): string {
+  if (key.revokedAt) return `revoked ${new Date(key.revokedAt).toLocaleString()}`;
+  if (key.revokeAfter) {
+    const until = new Date(key.revokeAfter);
+    return until.getTime() > Date.now()
+      ? `rotated, works until ${until.toLocaleString()}`
+      : `expired ${until.toLocaleString()}`;
+  }
+  return "active";
 }
 
 export function MerchantDetailPage() {
@@ -501,7 +513,7 @@ export function MerchantDetailPage() {
               <th>Label</th>
               <th>Created</th>
               <th>Last used</th>
-              <th>Revoked</th>
+              <th>Status</th>
               <th />
             </tr>
           </thead>
@@ -514,9 +526,9 @@ export function MerchantDetailPage() {
                 <td>{key.label ?? "-"}</td>
                 <td>{new Date(key.createdAt).toLocaleDateString()}</td>
                 <td>{key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString() : "never"}</td>
-                <td>{key.revokedAt ? new Date(key.revokedAt).toLocaleString() : "-"}</td>
+                <td>{apiKeyStatus(key)}</td>
                 <td>
-                  {key.revokedAt ? null : (
+                  {key.revokedAt || key.revokeAfter ? null : (
                     <RequireRole
                       allow={["finance", "super_admin"]}
                       fallback={<span className="admin-muted">finance role required</span>}
@@ -536,9 +548,9 @@ export function MerchantDetailPage() {
       {pendingRotation ? (
         <div className="admin-confirm">
           <p>
-            <strong>Rotate this API key?</strong> The current key is revoked and a replacement is
-            issued in the same transaction, so the merchant is never left without a working key —
-            but any integration still sending the old key will start failing immediately.
+            <strong>Rotate this API key?</strong> A replacement is issued now and shown once. The
+            current key keeps working for 24 hours so the merchant can deploy the new one, then
+            stops; any integration still sending it after that will fail.
           </p>
           <label>
             Label for the new key (optional)
