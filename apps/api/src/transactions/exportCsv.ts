@@ -9,7 +9,10 @@ export interface TransactionsExportFilters {
   status?: string[];
 }
 
-function csvEscape(value: string): string {
+function csvEscape(raw: string): string {
+  // A cell starting with = + - @ tab or CR runs as a formula in a
+  // spreadsheet (CSV injection); a leading quote makes it plain text.
+  const value = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
   if (value.includes(",") || value.includes('"') || value.includes("\n")) {
     return `"${value.replace(/"/g, '""')}"`;
   }
