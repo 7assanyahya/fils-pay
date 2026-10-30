@@ -470,7 +470,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/web && npm run typecheck
    ```
 
-### [ ] Step 8: Full Regression Verification
+### [x] Step 8: Full Regression Verification
 Run the complete TypeScript and Go test suites and typechecker to confirm 100% green status across all packages and services:
 ```bash
 npm run typecheck && npm test && cd apps/settlement && DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" go test -count=1 ./...
