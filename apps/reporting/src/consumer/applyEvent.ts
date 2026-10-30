@@ -144,12 +144,14 @@ async function applyBatchClosed(client: PoolClient, row: OutboxEventRow): Promis
       `SELECT captured_count FROM merchant_daily_volume WHERE merchant_id = $1 AND volume_date = $2`,
       [payload.merchantId, payload.batchDate],
     );
-    const rollup = rollupResult.rows[0] as { captured_count: number } | undefined;
-    const capturedCount = rollup?.captured_count ?? 0;
-    if (capturedCount < groundTruthCount) {
+    // No rollup row at all is the most-lagging case, not an error: this
+    // check only warns, and throwing here rolled back the whole consumer
+    // pass and stalled reporting for every merchant behind this event.
+    const rollupCount = Number((rollupResult.rows[0] as { captured_count: number } | undefined)?.captured_count ?? 0);
+    if (rollupCount < groundTruthCount) {
       console.warn(
         `reporting rollup lags ground truth for merchant ${payload.merchantId} on ${payload.batchDate}: ` +
-          `rollup=${capturedCount} ground_truth=${groundTruthCount}`,
+          `rollup=${rollupCount} ground_truth=${groundTruthCount}`,
       );
     }
   }
@@ -168,7 +170,9 @@ export async function applyDailySummaryRollup(
   occurredAt: Date,
   amountFils: number,
 ): Promise<void> {
-  const summaryDate = occurredAt.toISOString().slice(0, 10);
+  // Same Asia/Bahrain day key as captures and voids, so a refund at 01:00
+  // local lands on the same row as that day's sales, not the previous UTC day.
+  const summaryDate = toBahrainDateString(occurredAt);
   await client.query(
     `INSERT INTO merchant_daily_volume (merchant_id, volume_date, refund_count, refund_gross_fils, last_updated_at)
      VALUES ($1, $2, 1, $3, now())

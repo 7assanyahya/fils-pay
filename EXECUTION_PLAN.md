@@ -223,7 +223,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 16: Align Refund Daily Volume Rollup to `Asia/Bahrain` Business Date
+### [x] Step 16: Align Refund Daily Volume Rollup to `Asia/Bahrain` Business Date
 - **Why:** In `apps/reporting/src/consumer/applyEvent.ts`, captures and voids bucket `merchant_daily_volume.volume_date` using `toBahrainDateString(occurredAt)` (`Asia/Bahrain`, UTC+3), whereas `applyDailySummaryRollup` (for `refund.succeeded`) used `occurredAt.toISOString().slice(0, 10)` (UTC), placing refunds between 00:00 and 03:00 Bahrain time onto the previous day's row.
 - **Action:**
   ```bash
