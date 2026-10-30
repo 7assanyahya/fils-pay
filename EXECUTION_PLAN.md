@@ -402,7 +402,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    cd apps/settlement && DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" go test -count=1 ./...
    ```
 
-### [ ] Step 2: Revert Decoy Trap in Goodwill Credit Threshold (`BUG-A7`)
+### [x] Step 2: Revert Decoy Trap in Goodwill Credit Threshold (`BUG-A7`)
 1. Edit `apps/api/src/admin/creditThreshold.ts` (line 15) so `creditRequiresSecondApprover` checks principal (`baseAmountFils`) only:
    ```ts
    export function creditRequiresSecondApprover(draft: CreditDraftAmounts): boolean {
