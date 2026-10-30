@@ -414,7 +414,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/api -- src/admin/creditThreshold.test.ts
    ```
 
-### [ ] Step 3: Fix Multi-Capture Fan-Out Double-Counting in `getSettlementSummary` (`BUG-A3`)
+### [x] Step 3: Fix Multi-Capture Fan-Out Double-Counting in `getSettlementSummary` (`BUG-A3`)
 1. Edit `apps/api/src/settlement/query.ts` (lines 703–716) inside `getSettlementSummary`:
    - Change `SELECT DISTINCT te.id AS event_id, t.id AS txn_id, t.captured_fils` to:
      `SELECT DISTINCT te.id AS event_id, t.id AS txn_id, te.amount_fils`
