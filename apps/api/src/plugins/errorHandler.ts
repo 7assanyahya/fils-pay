@@ -31,6 +31,14 @@ export function errorHandler(
     return;
   }
 
+  // A malformed id (e.g. a non-UUID path segment) reaching a uuid column is
+  // Postgres' invalid_text_representation. Nothing with that id can exist,
+  // so answer 404 like the admin routes do, not 500.
+  if ((err as { code?: string }).code === "22P02") {
+    reply.code(404).send({ error: "not_found", message: "not_found" });
+    return;
+  }
+
   request.log.error({ err, occurredOn: formatIsoDate(new Date()) }, "unhandled error");
   reply.code(500).send({ error: "internal_error" });
 }
