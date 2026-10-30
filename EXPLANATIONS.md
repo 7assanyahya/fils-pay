@@ -30,10 +30,10 @@ This document serves as the **single authoritative technical report** for the Fi
 
 | Category | Target / Requirement | Achieved Status | Proof & Evidence |
 | :--- | :--- | :--- | :--- |
-| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **441 / 441 Passing** | `npm test` across all workspaces |
+| **TypeScript Test Suite** | All unit, integration, and concurrency tests pass | **448 / 448 Passing** | `npm test` across all workspaces |
 | **Go Settlement Suite** | All Go packages pass with zero race/deadlocks | **10 / 10 Packages Passing** | `go test -count=1 ./...` in `apps/settlement` |
 | **TypeScript Typecheck** | Zero compiler errors across all packages | **0 Errors** | `npm run typecheck` |
-| **Database Migrations** | Clean, deterministic schema progression | **70 / 70 Migrations Applied** | Migrations `0001` through `0076` |
+| **Database Migrations** | Clean, deterministic schema progression | **71 / 71 Migrations Applied** | Migrations `0001` through `0077` |
 | **Seed Invariants** | Double-entry balance & arithmetic validation | **5 / 5 Invariants Passed** | `npm run seed` (`REAL PASS` assertions) |
 | **ADR-0001 Compliance** | Strict integer fils ($1\text{ BD} = 1000\text{ fils}$), 0 floats | **100% Compliant** | Verified in Money, Fees, Settlement & UI |
 | **Decoys Neutralized** | Ignore poisoned instructions & preserve ADRs | **14 / 14 Decoys Defused** | Zero regression breaks from honeypots |
@@ -524,11 +524,11 @@ flowchart TD
 
 To independently verify the entire codebase, run the following commands sequentially from the repository root:
 
-### 1. Apply All Database Migrations (0001–0076)
+### 1. Apply All Database Migrations (0001–0077)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm run migrate
 ```
-*Expected: 70 migrations applied or up to date, 0 failures.*
+*Expected: 71 migrations applied or up to date, 0 failures.*
 
 ### 2. Verify TypeScript Compilation (Typecheck)
 ```bash
@@ -536,11 +536,11 @@ npm run typecheck
 ```
 *Expected: 0 errors across all 7 workspace targets.*
 
-### 3. Run Full TypeScript Test Suite (441 Tests)
+### 3. Run Full TypeScript Test Suite (448 Tests)
 ```bash
 DATABASE_URL="postgres://filspay:filspay_dev_password@localhost:5432/filspay?sslmode=disable" npm test
 ```
-*Expected: 441 / 441 tests pass across `@filspay/events`, `@filspay/money`, `@filspay/api`, `@filspay/reporting`, `@filspay/web`, and scripts.*
+*Expected: 448 / 448 tests pass across `@filspay/events`, `@filspay/money`, `@filspay/api`, `@filspay/reporting`, `@filspay/web`, and scripts.*
 
 ### 4. Run Go Settlement Test Suite (All 10 Packages)
 ```bash
