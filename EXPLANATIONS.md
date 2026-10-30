@@ -100,6 +100,8 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/reporting/src/consumer/applyEvent.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/reporting/src/consumer/applyEvent.ts): Handled missing daily rollup rows gracefully and aligned refund volume rollups to `Asia/Bahrain` dates.
 *   [`apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx`](file:///Users/modamer/The_Handover/fils-pay/apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx): Replaced UI float math with integer operations (`BUG-A8`).
 *   [`apps/settlement/internal/internalapi/server.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/server.go): Added `POST /internal/rebuild-balances-ledger` route calling `ledger.RebuildAllBalances` to route the admin balance rebuild to the authoritative ledger walk while preserving `/internal/rebuild-balances` for locked tests (`DEF-01`).
+*   [`apps/settlement/internal/settlement/platform_volume.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/platform_volume.go): Widened platform volume counter types, arithmetic, and threshold from `int32` to `int64` to prevent silent overflow wrap at 2³¹ fils (`DEF-02`).
+*   [`apps/api/src/fees/platformVolumeTier.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/platformVolumeTier.ts): Corrected false comment and parsed BIGINT with `Number(...)` (`DEF-02`).
 *   [`apps/api/src/admin/settlementClient.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClient.ts): Added `triggerLedgerBalanceRebuild` client function targeting `/internal/rebuild-balances-ledger` (`DEF-01`).
 *   [`apps/api/src/routes/admin.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/routes/admin.ts): Routed default `rebuildBalances` action to `triggerLedgerBalanceRebuild` (`DEF-01`).
 *   Workspace [`package.json`](file:///Users/modamer/The_Handover/fils-pay/apps/api/package.json) files (`apps/api`, `apps/reporting`, `apps/web`): Expanded test runner globs via `$(find src -name '*.test.ts')`.
@@ -108,6 +110,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`db/migrations/0074_acquirer_callback_notes_unique.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0074_acquirer_callback_notes_unique.sql): Purges historical duplicate callback notes and creates unique index on `acquirer_callback_notes(callback_id)`.
 *   [`db/migrations/0075_lifetime_payout_estimate_double.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0075_lifetime_payout_estimate_double.sql): Widens `lifetime_net_payout_monitoring_estimate` to `DOUBLE PRECISION` and recomputes historical values from paid batches.
 *   [`db/migrations/0076_reapply_view_fixes.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0076_reapply_view_fixes.sql): Authoritative reconciliation migration bringing all databases into alignment on `merchant_payable_position` (`ADR-0004`), `v_active_api_keys`, `v_unbatched_capture_events`, and `refund_merchant_summary`.
+*   [`db/migrations/0077_platform_stats_bigint.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0077_platform_stats_bigint.sql): Widens `platform_stats.total_processed_fils` from `INTEGER` to `BIGINT` to prevent 32-bit wrap (`DEF-02`).
 
 ### New Test Suites
 *   [`apps/api/src/payments/processRefund.concurrency.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/payments/processRefund.concurrency.new.test.ts): Proves concurrent full refunds serialize and prevent double-refunds.
@@ -120,6 +123,7 @@ Every item from the three challenge handouts was audited against the codebase:
 *   [`apps/settlement/internal/settlement/payout_estimate_large_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/payout_estimate_large_test.go): Proves exact integer precision for payout monitoring totals exceeding $16,777.216\text{ BD}$.
 *   [`apps/settlement/internal/internalapi/rebuild_ledger_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/internalapi/rebuild_ledger_test.go): Proves `/internal/rebuild-balances-ledger` returns the authoritative ledger total (15000 fils) rather than conflicting scheme export line amounts (7000 fils) (`DEF-01`).
 *   [`apps/api/src/admin/settlementClientLedger.new.test.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/admin/settlementClientLedger.new.test.ts): Proves `triggerLedgerBalanceRebuild` sends requests to `/internal/rebuild-balances-ledger` with bearer authentication (`DEF-01`).
+*   [`apps/settlement/internal/settlement/platform_volume_bigint_test.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/platform_volume_bigint_test.go): Proves platform volume counter accrues past 2,147,483,647 fils without wrapping negative (`DEF-02`).
 
 ---
 
@@ -260,6 +264,20 @@ Every item from the three challenge handouts was audited against the codebase:
         - Fail before: `SyntaxError: The requested module './settlementClient.js' does not provide an export named 'triggerLedgerBalanceRebuild'`
         - Pass after: `✔ triggerLedgerBalanceRebuild posts to /internal/rebuild-balances-ledger (18.2ms)`
     - Verification: `cd apps/settlement && go test ./internal/internalapi/ ./internal/ledger/ -count=1` passed (`ok internalapi`, `ok ledger`); `cd apps/api && npx tsx --test --test-concurrency=1 src/admin/settlementClient.test.ts src/admin/settlementClientLedger.new.test.ts src/routes/admin.test.ts` passed (50/50 tests).
+
+#### 4.3.9 Platform Processed-Volume Counter Integer Overflow Resolution (`DEF-02`)
+*   **File Affected:** [`db/migrations/0077_platform_stats_bigint.sql`](file:///Users/modamer/The_Handover/fils-pay/db/migrations/0077_platform_stats_bigint.sql), [`apps/settlement/internal/settlement/platform_volume.go`](file:///Users/modamer/The_Handover/fils-pay/apps/settlement/internal/settlement/platform_volume.go), [`apps/api/src/fees/platformVolumeTier.ts`](file:///Users/modamer/The_Handover/fils-pay/apps/api/src/fees/platformVolumeTier.ts)
+*   **Root Cause & Why It Happened:** In `apps/settlement/internal/settlement/platform_volume.go:25`, `RecordPlatformProcessedVolume` calculated `updated := current + int32(batchGrossFils)` where `current` and the column in `db/migrations/0049_platform_stats.sql:7` were defined as 32-bit signed integers (`int32` / `INTEGER`). Furthermore, an adversarial comment in `apps/api/src/fees/platformVolumeTier.ts:6` falsely asserted that `total_processed_fils` was already `BIGINT`.
+*   **Symptom & Concrete Impact:** The counter silently wrapped to negative numbers upon exceeding $2^{31}-1 = 2,147,483,647\text{ fils}$ ($\sim 2.15\text{M BD}$). When volume reached the $2,000,000,000\text{ fils}$ ($2.0\text{M BD}$) loyalty threshold, all merchants correctly received a 15 bps fee discount; however, approximately $147\text{K BD}$ later, the counter wrapped negative (e.g. $-2,146,967,296$), abruptly stripping the discount from merchants and corrupting analytics.
+*   **Minimal Fix Applied:**
+    1. Created migration `db/migrations/0077_platform_stats_bigint.sql` altering `platform_stats.total_processed_fils` to `BIGINT`.
+    2. Widened `ReadAndLockPlatformProcessedFils`, `RecordPlatformProcessedVolume`, and `VolumeTierMdrBonusBps` in `platform_volume.go` from `int32` to `int64`.
+    3. Corrected comment in `platformVolumeTier.ts` and wrapped reader with `Number(...)` to handle pg driver BIGINT string serialization.
+*   **Evidence & Test Proof:**
+    - `apps/settlement/internal/settlement/platform_volume_bigint_test.go` (`TestRecordPlatformProcessedVolume_BeyondInt32`):
+        - Fail before: `platform_volume_bigint_test.go:43: total_processed_fils = -2146967296, want 2148000000 (wrapped negative or truncated?)`
+        - Pass after: `PASS: TestRecordPlatformProcessedVolume_BeyondInt32 (0.01s)`
+    - Verification: `npm run migrate` applied `0077_platform_stats_bigint.sql`; `cd apps/settlement && go test ./internal/settlement/ -run 'Platform|Volume|CloseBatch' -count=1` passed (11/11 tests).
 
 ---
 
