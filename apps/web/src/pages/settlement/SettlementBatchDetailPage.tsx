@@ -81,7 +81,7 @@ export function SettlementBatchDetailPage() {
   }
 
   const { batch } = state;
-  const displayProgress = parseFloat((batch.grossFils / 10000).toFixed(2));
+  const displayProgress = Math.min(100, Math.floor(batch.grossFils / 10_000));
 
   return (
     <section>

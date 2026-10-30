@@ -461,7 +461,7 @@ Execute the following steps **in exact sequential order**. Do not skip steps or 
    npm test --workspace=@filspay/api -- src/paymentLinks/ src/auth/ src/admin/inviteCode.test.ts
    ```
 
-### [ ] Step 7: Replace Float Division in `SettlementBatchDetailPage.tsx` (`BUG-A8`)
+### [x] Step 7: Replace Float Division in `SettlementBatchDetailPage.tsx` (`BUG-A8`)
 1. Edit `apps/web/src/pages/settlement/SettlementBatchDetailPage.tsx` (line 84):
    - Replace `const displayProgress = parseFloat((batch.grossFils / 10000).toFixed(2));` with:
      `const displayProgress = Math.min(100, Math.floor(batch.grossFils / 10_000));`
