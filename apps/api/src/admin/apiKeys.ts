@@ -10,6 +10,12 @@ export interface RotatedApiKey extends IssuedApiKey {
 }
 
 /** Rotates a merchant's API key, atomically with its audit row. */
+/** How long the previous key keeps working after a rotation, so the merchant
+ *  can deploy the new one. Bounded: verifyApiKey stops honouring the old key
+ *  once revoke_after passes (migration 0056 added the column, but nothing
+ *  ever set it, so rotated keys stayed valid forever). */
+export const API_KEY_ROTATION_GRACE_HOURS = 24;
+
 export async function rotateApiKeyAsAdmin(
   pool: Pool,
   config: Pick<Config, "nodeEnv">,
@@ -34,6 +40,12 @@ export async function rotateApiKeyAsAdmin(
       label: input.label ?? row.label ?? undefined,
       rotatedFromKeyId: input.apiKeyId,
     });
+
+    await client.query(
+      `UPDATE api_keys SET revoke_after = now() + make_interval(hours => $2)
+        WHERE id = $1 AND revoked_at IS NULL`,
+      [input.apiKeyId, API_KEY_ROTATION_GRACE_HOURS],
+    );
 
     await insertAdminAuditLog(client, {
       adminUserId: input.adminUserId,

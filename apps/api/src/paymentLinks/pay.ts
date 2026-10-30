@@ -57,7 +57,42 @@ export async function payPaymentLink(
   config: { paymentLinkReservationTimeoutSeconds: number },
   input: PayPaymentLinkInput,
 ): Promise<PayPaymentLinkResult> {
-  const expiryCheckTime = expiryReferenceTime(input.submittedAt);
+  // Incident 2026-05-14: the reservation alone can't stop a double charge —
+  // once a slow authorize+capture outlives the reservation timeout, a second
+  // buyer re-claims the link and both cards are charged. A session advisory
+  // lock per link, held on a dedicated connection for the whole attempt,
+  // makes a second concurrent attempt answer "processing" instead. A crashed
+  // process drops its connection and with it the lock, so the reservation's
+  // self-healing still works.
+  const lockClient = await pool.connect();
+  try {
+    const locked = await lockClient.query<{ ok: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext('payment_link'), hashtext($1)) AS ok`,
+      [input.token],
+    );
+    if (!locked.rows[0]?.ok) {
+      return { statusCode: 409, body: { error: "payment_link_processing" } };
+    }
+    try {
+      return await payPaymentLinkLocked(pool, acquirer, config, input);
+    } finally {
+      await lockClient.query(`SELECT pg_advisory_unlock(hashtext('payment_link'), hashtext($1))`, [input.token]);
+    }
+  } finally {
+    lockClient.release();
+  }
+}
+
+async function payPaymentLinkLocked(
+  pool: Pool,
+  acquirer: AcquirerSimulator,
+  config: { paymentLinkReservationTimeoutSeconds: number },
+  input: PayPaymentLinkInput,
+): Promise<PayPaymentLinkResult> {
+  // FP-203: expiry is judged by the server's clock only. input.submittedAt
+  // comes from the buyer's browser — trusting it let an expired link be paid
+  // by sending any earlier timestamp.
+  const expiryCheckTime = new Date();
 
   // Step 1 — claim. A single UPDATE is already atomic; no explicit
   // transaction needed.

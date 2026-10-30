@@ -203,7 +203,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 15: Fix API Key Rotation Grace Period Expiry & Payment Link Slow-Capture Advisory Lock
+### [x] Step 15: Fix API Key Rotation Grace Period Expiry & Payment Link Slow-Capture Advisory Lock
 - **Why:**
   1. `rotateApiKeyAsAdmin` (`apps/api/src/admin/apiKeys.ts`) minted a new key without setting `revoke_after` on the old key, and `verifyApiKey` (`apps/api/src/apiKeys/verify.ts`) only checked `revoked_at IS NULL` without checking `(revoke_after IS NULL OR revoke_after > now())`.
   2. In `payPaymentLink` (`apps/api/src/paymentLinks/pay.ts`), if a slow acquirer call exceeded `paymentLinkReservationTimeoutSeconds`, a second buyer could re-claim the "stale" reservation and double-charge the link (Incident 2026-05-14). Acquiring a session-level Postgres advisory lock per link (`pg_try_advisory_lock(hashtext('payment_link'), hashtext($1))`) and checking link expiry against server time `new Date()` prevents both double-charges and backdated `submittedAt` bypasses (`FP-203`), while keeping `expiryReferenceTime` exported for `pay.test.ts`.
