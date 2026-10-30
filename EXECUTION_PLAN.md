@@ -260,7 +260,7 @@ Execute **Steps 9 through 20** sequentially on the `hackathon-resolution` branch
 
 ---
 
-### [ ] Step 18: Update `EXPLANATIONS.md`, `AUDIT_FINDINGS.md`, and `FIXES_EXPLAINED.md` (Judge Audit Trail)
+### [x] Step 18: Update `EXPLANATIONS.md`, `AUDIT_FINDINGS.md`, and `FIXES_EXPLAINED.md` (Judge Audit Trail)
 - **Why:** Following `.agents/skills/judge-audit-trail/SKILL.md`, all judge-facing explanation and audit documents must accurately reflect **every** fixed bug across both Phase 1 (`hackathon-resolution`) and Phase 2 (`origin/7asn`), and must remove stale descriptions from `90341b3` (such as the reverted decoy claims on `creditThreshold.ts` and `RecalculateMDR` open-only batches).
 - **Action:**
   1. Checkout `AUDIT_FINDINGS.md` and `FIXES_EXPLAINED.md` from `6f3d325`:
