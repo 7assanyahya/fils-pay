@@ -300,10 +300,20 @@ export async function getReconciliationReport(
           AND status IN ('closed', 'paid')`,
       [input.merchantId, input.from, input.to],
     ),
-    pool.query<{ amount_fils: string | number }>(
-      `SELECT te.amount_fils
+    // Each pending event is estimated at the rate capture charged it: the
+    // fee_schedules row effective at the event, else merchants.mdr_bps
+    // (capture.ts / feeSchedule.ts resolve it the same way).
+    pool.query<{ amount_fils: string | number; mdr_bps: number }>(
+      `SELECT te.amount_fils,
+              COALESCE(
+                (SELECT fs.mdr_bps FROM fee_schedules fs
+                  WHERE fs.merchant_id = t.merchant_id AND fs.effective_from <= te.occurred_at
+                  ORDER BY fs.effective_from DESC, fs.created_at DESC
+                  LIMIT 1),
+                m.mdr_bps) AS mdr_bps
          FROM transaction_events te
          JOIN transactions t ON t.id = te.transaction_id
+         JOIN merchants m ON m.id = t.merchant_id
         WHERE t.merchant_id = $1 AND te.event_type IN ('captured', 'partially_captured')
           AND te.settlement_batch_id IS NULL
           AND te.occurred_at >= $2 AND te.occurred_at < $3`,
@@ -315,16 +325,13 @@ export async function getReconciliationReport(
     ),
   ]);
 
-  // MK: merchants.mdr_bps is kept in sync with the current fee_schedules row by the 0046 trigger,
-  // so reading it here is the same as resolving the schedule
   const merchant = merchantResult.rows[0];
-  const mdrBps = merchant?.mdr_bps ?? 0;
   const discountBps = merchant?.negotiated_discount_bps ?? 0;
 
   let pendingUnbatchedFils = 0;
   for (const row of pendingResult.rows) {
     const amountFils = Number(row.amount_fils);
-    const feeFils = estimateFeeFils(amountFils, mdrBps, discountBps);
+    const feeFils = estimateFeeFils(amountFils, row.mdr_bps, discountBps);
     pendingUnbatchedFils += amountFils - feeFils;
   }
 
